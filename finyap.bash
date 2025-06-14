@@ -3,12 +3,13 @@
 # Word Guessing Game with fzf
 # Takes sentences from a TSV file, masks ALL words, and lets the user
 # guess them sequentially from left to right using fzf.
-# This version highlights common Finnish clitics in pink.
+# This version highlights common Finnish clitics in pink and displays
+# the Finnish flag on a perfect typed match.
 
 # --- Configuration ---
 SENTENCE_FILE='example-sentences.tsv'
 SAMPLED_LINES_COUNT=100 # Number of lines to sample from the large file
-VERSION="0.0.1"
+VERSION="0.0.2"
 
 # --- Help and Version Functions ---
 show_help() {
@@ -62,6 +63,19 @@ if [[ ! -r "$SENTENCE_FILE" ]]; then
   echo "Error: Sentence file '$SENTENCE_FILE' is not readable."
   exit 1
 fi
+
+# --- Helper function to print the Finnish flag ---
+print_finnish_flag() {
+  local b='\e[48;2;0;47;108m'    # True Color Blue
+  local w='\e[48;2;255;255;255m' # True Color White
+  local r='\e[0m'                # Reset
+  echo -e ""                     # Add a leading newline for spacing
+  echo -e "${w}     ${b}   ${w}           ${r}"
+  echo -e "${w}     ${b}   ${w}           ${r}"
+  echo -e "${b}                   ${r}"
+  echo -e "${w}     ${b}   ${w}           ${r}"
+  echo -e "${w}     ${b}   ${w}           ${r}"
+}
 
 # --- Helper function to clean a word for matching ---
 clean_word() {
@@ -137,14 +151,25 @@ run_fzf_preview() {
   echo -e "Sentence: $FZF_PREVIEW_MASKED_SENTENCE"
   echo ""
   echo "English: $FZF_PREVIEW_ENGLISH_TRANSLATION"
+  echo ""
+  echo "Typed so far: ${C_YELLOW}${query_for_comparison}${C_RESET}"
 
   if [[ -n "$selection_for_comparison" && "$selection_for_comparison" == "$FZF_PREVIEW_TARGET_WORD" ]]; then
     echo -e "\n\n${C_GREEN}YOU GOT IT!${C_RESET} (Correct word selected)"
     echo "Press Enter to confirm."
+    if [[ "$query_for_comparison" == "$FZF_PREVIEW_TARGET_WORD" ]]; then
+      echo -e "\n${C_GREEN}PERFECT typing!${C_RESET} (Press Enter if selected)"
+      print_finnish_flag # Display the flag on a perfect match!
+    else
+      echo -e "\n${C_YELLOW}¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥${C_RESET}"
+      echo -e "${C_YELLOW}¥¥¥ Go for gold! Type it perfectly without looking down!! ¥¥¥${C_RESET}    (Or press Enter mow to continue)"
+      echo -e "${C_YELLOW}¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥${C_RESET}"
+    fi
   elif [[ -n "$current_fzf_query" ]]; then
     if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison"* ]]; then
       if [[ "$query_for_comparison" == "$FZF_PREVIEW_TARGET_WORD" ]]; then
         echo -e "\n${C_GREEN}PERFECT typing!${C_RESET} (Press Enter if selected)"
+        print_finnish_flag # Display the flag on a perfect match!
       else
         echo -e "\n${C_YELLOW}GOOD...${C_RESET} (typed: \"$current_fzf_query\")"
       fi
@@ -155,8 +180,8 @@ run_fzf_preview() {
     echo -e "\nStart typing, or use arrows to select the missing word..."
   fi
 }
-# Export the function and variables for the fzf subshell
-export -f run_fzf_preview
+# Export the functions and variables for the fzf subshell
+export -f run_fzf_preview print_finnish_flag
 export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK
 
 # --- 0. Pre-sample sentences from the large file ---
@@ -165,7 +190,7 @@ sampled_data=$(shuf "$SENTENCE_FILE" | head -n "$SAMPLED_LINES_COUNT")
 
 if [[ -z "$sampled_data" ]]; then
   echo "Error: Failed to sample any lines from '$SENTENCE_FILE'."
-  unset -f run_fzf_preview # Clean up exported function on error
+  unset -f run_fzf_preview print_finnish_flag # Clean up exported functions on error
   exit 1
 fi
 echo "Sampling complete. Preparing game..."
@@ -184,7 +209,7 @@ all_finnish_words=$(echo "$sampled_data" | cut -f1 |
 
 if [[ -z "$all_finnish_words" ]]; then
   echo "Error: Could not extract any unique Finnish words from the sampled data."
-  unset -f run_fzf_preview
+  unset -f run_fzf_preview print_finnish_flag
   exit 1
 fi
 
@@ -193,7 +218,7 @@ random_line=$(echo "$sampled_data" | shuf -n 1)
 
 if [[ -z "$random_line" ]]; then
   echo "Error: Failed to select a random line from the sampled data."
-  unset -f run_fzf_preview
+  unset -f run_fzf_preview print_finnish_flag
   exit 1
 fi
 
@@ -205,7 +230,7 @@ words_in_sentence=(${words_in_sentence[@]}) # Re-evaluate to handle potential ex
 
 if [[ ${#words_in_sentence[@]} -eq 0 ]]; then
   echo "Error: Chosen Finnish sentence from sample is empty or could not be parsed."
-  unset -f run_fzf_preview
+  unset -f run_fzf_preview print_finnish_flag
   exit 1
 fi
 
@@ -328,6 +353,6 @@ echo
 # Clean up exported variables and function
 unset FZF_PREVIEW_TARGET_WORD FZF_PREVIEW_MASKED_SENTENCE FZF_PREVIEW_ENGLISH_TRANSLATION
 unset C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK
-unset -f run_fzf_preview
+unset -f run_fzf_preview print_finnish_flag
 
 exit 0
