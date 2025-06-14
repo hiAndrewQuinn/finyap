@@ -24,17 +24,39 @@ guess them sequentially from left to right using fzf.
 Options:
   -h, --help      Show this help message and exit.
       --version   Show script version and exit.
+  --input FILE    Use a specific TSV file for sentences, instead
+                  of our default, >100,000 line Tatoeba file.
 EOF
 }
 
 # --- Argument Parsing ---
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-  show_help
-  exit 0
-elif [[ "$1" == "--version" ]]; then
-  echo "$(basename "$0") version $VERSION"
-  exit 0
-fi
+while [[ $# -gt 0 ]]; do
+  key="$1"
+  case $key in
+  -h | --help)
+    show_help
+    exit 0
+    ;;
+  --version)
+    echo "$(basename "$0") version $VERSION"
+    exit 0
+    ;;
+  --input)
+    if [[ -n "$2" ]]; then
+      SENTENCE_FILE="$2"
+      shift # past argument
+      shift # past value
+    else
+      echo "Error: --input option requires a file path." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    # Unknown options are ignored.
+    shift
+    ;;
+  esac
+done
 
 # --- ANSI Colors ---
 C_HIGHLIGHT=$'\033[42;30m'         # Black Text on Green Background
@@ -185,7 +207,7 @@ export -f run_fzf_preview print_finnish_flag
 export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK
 
 # --- 0. Pre-sample sentences from the large file ---
-echo "Sampling $SAMPLED_LINES_COUNT random lines from $SENTENCE_FILE..."
+echo "Sampling at most $SAMPLED_LINES_COUNT random lines from $SENTENCE_FILE..."
 sampled_data=$(shuf "$SENTENCE_FILE" | head -n "$SAMPLED_LINES_COUNT")
 
 if [[ -z "$sampled_data" ]]; then
