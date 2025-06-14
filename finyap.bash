@@ -8,6 +8,32 @@
 # --- Configuration ---
 SENTENCE_FILE='example-sentences.tsv'
 SAMPLED_LINES_COUNT=100 # Number of lines to sample from the large file
+VERSION="0.0.1"
+
+# --- Help and Version Functions ---
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+Word Guessing Game with fzf.
+
+Takes sentences from a TSV file, masks all words, and lets the user
+guess them sequentially from left to right using fzf.
+
+Options:
+  -h, --help      Show this help message and exit.
+      --version   Show script version and exit.
+EOF
+}
+
+# --- Argument Parsing ---
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  show_help
+  exit 0
+elif [[ "$1" == "--version" ]]; then
+  echo "$(basename "$0") version $VERSION"
+  exit 0
+fi
 
 # --- ANSI Colors ---
 C_HIGHLIGHT=$'\033[42;30m'         # Black Text on Green Background
