@@ -46,11 +46,11 @@ Learn Finnish by writing Finnish. With guardrails, of course.
 
 - Show the help message:
   ```bash
-  ./game.sh --help
+  bash finyap.bash --help
   ```
 - Show the script version:
   ```bash
-  ./game.sh --version
+  bash finyap.bash --version
   ```
 
 ## Configuration
