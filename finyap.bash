@@ -170,9 +170,9 @@ run_fzf_preview() {
   local selection_for_comparison="$current_fzf_selection"
 
   # Use `echo -e` to correctly render the ANSI color codes in the masked sentence.
-  echo -e "Sentence: $FZF_PREVIEW_MASKED_SENTENCE"
+  echo -e "Sentence:     $FZF_PREVIEW_MASKED_SENTENCE"
   echo ""
-  echo "English: $FZF_PREVIEW_ENGLISH_TRANSLATION"
+  echo "English:      $FZF_PREVIEW_ENGLISH_TRANSLATION"
   echo ""
   echo "Typed so far: ${C_YELLOW}${query_for_comparison}${C_RESET}"
 
@@ -201,10 +201,12 @@ run_fzf_preview() {
   else
     echo -e "\nStart typing, or use arrows to select the missing word..."
   fi
+
+  echo -e "\n(Sentence file: $SENTENCE_FILE)"
 }
 # Export the functions and variables for the fzf subshell
 export -f run_fzf_preview print_finnish_flag
-export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK
+export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK SENTENCE_FILE
 
 # --- 0. Pre-sample sentences from the large file ---
 echo "Sampling at most $SAMPLED_LINES_COUNT random lines from $SENTENCE_FILE..."
