@@ -52,6 +52,10 @@ Learn Finnish by writing Finnish. With guardrails, of course.
   ```bash
   bash finyap.bash --version
   ```
+- Play `finyap` using a custom TSV file, for example the ones included in `scenarios/`:
+  ```bash
+  bash finyap.bash --input scenarios/ordering-coffee.tsv
+  ```
 
 ## Configuration
 
