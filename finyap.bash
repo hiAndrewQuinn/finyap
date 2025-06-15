@@ -61,6 +61,7 @@ done
 # --- ANSI Colors ---
 C_HIGHLIGHT=$'\033[42;30m'         # Black Text on Green Background
 C_BG_HIGHLIGHT_PINK=$'\033[45;30m' # Black Text on Pink Background
+C_BG_HIGHLIGHT_YELLOW=$'\033[43;30m'
 C_RESET=$'\033[0m'
 C_GREEN=$'\033[1;32m'
 C_YELLOW=$'\033[1;33m'
@@ -189,9 +190,9 @@ run_fzf_preview() {
     elif [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison"* ]]; then
       echo -e "\n\n${C_GREEN}Correct word selected! ${C_RESET}${C_YELLOW}You're getting there!!${C_RESET}"
       echo ""
-      echo -e "\n${C_YELLOW}¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥${C_RESET}"
-      echo -e "${C_YELLOW}¥¥¥ Go for gold! Type it perfectly without looking down!! ¥¥¥${C_RESET}    (Or press Enter mow to continue)"
-      echo -e "${C_YELLOW}¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥${C_RESET}"
+      echo -e "\n${C_BG_HIGHLIGHT_YELLOW}¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥${C_RESET}"
+      echo -e "${C_BG_HIGHLIGHT_YELLOW}¥¥¥${C_RESET}${C_YELLOW} Go for gold! Type it perfectly without looking down!! ${C_RESET}${C_BG_HIGHLIGHT_YELLOW}¥¥¥${C_RESET}    (Or press Enter mow to continue)"
+      echo -e "${C_BG_HIGHLIGHT_YELLOW}¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥${C_RESET}"
     else
       echo -e "\n\n${C_GREEN}Correct word selected! ${C_RESET}${C_RED}But you've got the letters mixed up!!!${C_RESET}"
       echo ""
@@ -215,7 +216,7 @@ run_fzf_preview() {
 }
 # Export the functions and variables for the fzf subshell
 export -f run_fzf_preview print_finnish_flag
-export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK SENTENCE_FILE
+export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK C_BG_HIGHLIGHT_YELLOW SENTENCE_FILE
 
 # --- 0. Pre-sample sentences from the large file ---
 echo "Sampling at most $SAMPLED_LINES_COUNT random lines from $SENTENCE_FILE..."
