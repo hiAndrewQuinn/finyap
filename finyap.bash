@@ -185,7 +185,7 @@ run_fzf_preview() {
 
   if [[ -n "$selection_for_comparison" && "$selection_for_comparison" == "$FZF_PREVIEW_TARGET_WORD" ]]; then
     if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison" ]]; then
-      echo -e "\n\n${C_GREEN}Correct word selected! PERFECT TYING!!${C_RESET}"
+      echo -e "\n\n${C_GREEN}Correct word selected! PERFECT TYPING!!${C_RESET}"
       print_finnish_flag # Display the flag on a perfect match!
     elif [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison"* ]]; then
       echo -e "\n\n${C_GREEN}Correct word selected! ${C_RESET}${C_YELLOW}You're getting there!!${C_RESET}"
