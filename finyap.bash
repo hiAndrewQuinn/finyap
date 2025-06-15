@@ -268,12 +268,6 @@ if [[ ${#words_in_sentence[@]} -eq 0 ]]; then
   exit 1
 fi
 
-# --- 3. Main Game Loop ---
-echo "--- Finnish Word Guessing Game ---"
-echo "Complete the sentence by guessing each word."
-echo "English Hint: $english_translation"
-echo
-
 revealed_words=()
 game_failed=false
 
@@ -328,21 +322,17 @@ for i in "${!words_in_sentence[@]}"; do
   export FZF_PREVIEW_MASKED_SENTENCE="$masked_sentence_for_display"
 
   # Show the user the current state before prompting for a guess
-  echo -e "Progress: $masked_sentence_for_display"
-  echo "(Guessing word $((i + 1)) of ${#words_in_sentence[@]})"
+  echo -e "$masked_sentence_for_display"
 
   # --- Run fzf ---
   selected_word_from_fzf=$(echo "$all_finnish_words" |
     fzf --ignore-case --layout=reverse --border \
-      --prompt="Find word> " \
+      --prompt="  ${ciphered_current} == " \
       --preview="bash -c 'run_fzf_preview \"\$1\" \"\$2\"' -- {q} {}" \
       --preview-window="up,65%,wrap,border-sharp")
 
-  # --- Check Result ---
-  echo # Add a newline for better formatting after fzf closes
-
   if [[ -z "$selected_word_from_fzf" ]]; then
-    echo "No word selected. Game aborted."
+    echo "${C_YELLOW}No word selected. Game aborted.${C_RESET}"
     game_failed=true
     break
   fi
@@ -353,8 +343,8 @@ for i in "${!words_in_sentence[@]}"; do
     # We replace the end marker `»` with a simple RESET. The outer `echo` handles
     # the initial green color and the final reset for the whole line.
     colored_word=$(add_clitic_markers "$target_word_original" | sed -e "s/«/${C_PINK}/g" -e "s/»/${C_RESET}/g")
-    echo -e "${C_GREEN}Correct!${C_RESET} The word was: \"${C_GREEN}${colored_word}${C_RESET}\""
-    echo
+    # echo -e "${C_GREEN}Correct!${C_RESET} The word was: \"${C_GREEN}${colored_word}${C_RESET}\""
+    # echo
   else
     echo -e "${C_RED}Not quite. Game over.${C_RESET}"
     echo "You selected: \"$selected_word_from_fzf\""
