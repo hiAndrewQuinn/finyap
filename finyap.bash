@@ -170,22 +170,32 @@ run_fzf_preview() {
   local selection_for_comparison="$current_fzf_selection"
 
   # Use `echo -e` to correctly render the ANSI color codes in the masked sentence.
-  echo -e "Sentence:     $FZF_PREVIEW_MASKED_SENTENCE"
+  echo -e "Sentence file: ${C_YELLOW}${SENTENCE_FILE}${C_RESET}"
+  echo -e "Sentence:      $FZF_PREVIEW_MASKED_SENTENCE"
+  echo "English:       $FZF_PREVIEW_ENGLISH_TRANSLATION"
   echo ""
-  echo "English:      $FZF_PREVIEW_ENGLISH_TRANSLATION"
-  echo ""
-  echo "Typed so far: ${C_YELLOW}${query_for_comparison}${C_RESET}"
+  if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison" ]]; then
+    echo "Typed so far:  ${C_GREEN}${query_for_comparison}${C_RESET}"
+  elif [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison"* ]]; then
+    echo "Typed so far:  ${C_YELLOW}${query_for_comparison}${C_RESET}"
+  else
+    echo "Typed so far:  ${C_RED}${query_for_comparison}${C_RESET}"
+  fi
 
   if [[ -n "$selection_for_comparison" && "$selection_for_comparison" == "$FZF_PREVIEW_TARGET_WORD" ]]; then
-    echo -e "\n\n${C_GREEN}YOU GOT IT!${C_RESET} (Correct word selected)"
-    echo "Press Enter to confirm."
-    if [[ "$query_for_comparison" == "$FZF_PREVIEW_TARGET_WORD" ]]; then
-      echo -e "\n${C_GREEN}PERFECT typing!${C_RESET} (Press Enter if selected)"
+    if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison" ]]; then
+      echo -e "\n\n${C_GREEN}Correct word selected! PERFECT TYING!!${C_RESET}"
       print_finnish_flag # Display the flag on a perfect match!
-    else
+    elif [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison"* ]]; then
+      echo -e "\n\n${C_GREEN}Correct word selected! ${C_RESET}${C_YELLOW}You're getting there!!${C_RESET}"
+      echo ""
       echo -e "\n${C_YELLOW}¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥${C_RESET}"
       echo -e "${C_YELLOW}¥¥¥ Go for gold! Type it perfectly without looking down!! ¥¥¥${C_RESET}    (Or press Enter mow to continue)"
       echo -e "${C_YELLOW}¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥${C_RESET}"
+    else
+      echo -e "\n\n${C_GREEN}Correct word selected! ${C_RESET}${C_RED}But you've got the letters mixed up!!!${C_RESET}"
+      echo ""
+      echo -e "\n${C_BG_HIGHLIGHT_PINK}Slow down! Hit Backspace!! You can still win this!!!${C_RESET}"
     fi
   elif [[ -n "$current_fzf_query" ]]; then
     if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison"* ]]; then
@@ -202,7 +212,6 @@ run_fzf_preview() {
     echo -e "\nStart typing, or use arrows to select the missing word..."
   fi
 
-  echo -e "\n(Sentence file: $SENTENCE_FILE)"
 }
 # Export the functions and variables for the fzf subshell
 export -f run_fzf_preview print_finnish_flag
