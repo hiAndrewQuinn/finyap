@@ -68,12 +68,10 @@ C_YELLOW=$'\033[1;33m'
 C_RED=$'\033[1;31m'
 C_PINK=$'\033[1;35m'
 C_BLUE=$'\033[1;34m'
+C_GREY=$'\033[2m'
 
-echo ""
-echo ""
-echo -e "${C_BLUE}finyap v${FINYAP_VERSION} - https://github.com/hiAndrewQuinn/finyap - https://finbug.xyz/ - https://andrew-quinn.me/${C_RESET}"
-echo ""
-echo ""
+echo -e "finyap v${FINYAP_VERSION} - https://github.com/hiAndrewQuinn/finyap - https://finbug.xyz/ - https://andrew-quinn.me/"
+echo -e "Found a bug? Report it at https://github.com/hiAndrewQuinn/finyap/issues/new?labels=bug"
 
 # --- Sanity Checks ---
 if ! command -v fzf &>/dev/null; then
@@ -191,8 +189,9 @@ run_fzf_preview() {
   else
     echo "Typed so far:  ${C_RED}${query_for_comparison}${C_RESET}"
   fi
+
   echo ""
-  echo ""
+  echo -e "${C_GREY}Found a bug? Report it at https://github.com/hiAndrewQuinn/finyap/issues/new?labels=bug${C_RESET}"
 
   if [[ -n "$selection_for_comparison" && "$selection_for_comparison" == "$FZF_PREVIEW_TARGET_WORD" ]]; then
     if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison" ]]; then
@@ -227,9 +226,10 @@ run_fzf_preview() {
 }
 # Export the functions and variables for the fzf subshell
 export -f run_fzf_preview print_finnish_flag
-export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK C_BG_HIGHLIGHT_YELLOW SENTENCE_FILE FINYAP_VERSION C_BLUE
+export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK C_BG_HIGHLIGHT_YELLOW SENTENCE_FILE FINYAP_VERSION C_BLUE C_GREY
 
 # --- 0. Pre-sample sentences from the large file ---
+echo ""
 echo "Sampling at most $SAMPLED_LINES_COUNT random lines from $SENTENCE_FILE..."
 sampled_data=$(shuf "$SENTENCE_FILE" | head -n "$SAMPLED_LINES_COUNT")
 
@@ -239,6 +239,7 @@ if [[ -z "$sampled_data" ]]; then
   exit 1
 fi
 echo "Sampling complete. Preparing game..."
+echo ""
 
 # --- 1. Prepare the list of unique Finnish words for fzf (FROM SAMPLED DATA) ---
 all_finnish_words=$(echo "$sampled_data" | cut -f1 |
@@ -375,9 +376,11 @@ for i in "${!words_in_sentence[@]}"; do
     # echo -e "${C_GREEN}Correct!${C_RESET} The word was: \"${C_GREEN}${colored_word}${C_RESET}\""
     # echo
   else
+    echo
     echo -e "${C_RED}Not quite. Game over.${C_RESET}"
-    echo "You selected: \"$selected_word_from_fzf\""
-    echo "The correct word was: \"$target_word_original\""
+    echo
+    echo -e "You selected:         ${C_RED}${selected_word_from_fzf}${C_RESET}"
+    echo "The correct word was: ${C_GREEN}${target_word_original}${C_RESET}"
     game_failed=true
     break
   fi
@@ -386,27 +389,20 @@ done
 # --- 4. Final Game Summary ---
 if [[ "$game_failed" == true ]]; then
   echo
-  echo "The full sentence was:"
-  echo "Finnish: $finnish_sentence"
-  echo "English: $english_translation"
 else
+  echo
   echo -e "${C_GREEN}Congratulations! You completed the sentence!${C_RESET}"
-  # For the final display, re-process the full sentence to show all clitics
-  final_words_processed=()
-  for word in "${words_in_sentence[@]}"; do
-    marked=$(add_clitic_markers "$word")
-    colored=$(echo "$marked" | sed -e "s/«/${C_PINK}/g" -e "s/»/${C_RESET}/g")
-    final_words_processed+=("$colored")
-  done
-  echo -e "Finnish: ${final_words_processed[@]}"
-  echo "English: $english_translation"
+  echo
 fi
-echo
+
+echo "The full sentence was:"
+echo "Finnish: $finnish_sentence"
+echo "English: $english_translation"
 
 # Clean up exported variables and function
 unset FZF_PREVIEW_TARGET_WORD FZF_PREVIEW_MASKED_SENTENCE FZF_PREVIEW_ENGLISH_TRANSLATION
 unset C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK
-unset C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK C_BG_HIGHLIGHT_YELLOW SENTENCE_FILE FINYAP_VERSION
+unset C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK C_BG_HIGHLIGHT_YELLOW SENTENCE_FILE FINYAP_VERSION C_GREY
 unset -f run_fzf_preview print_finnish_flag
 
 exit 0

@@ -10,17 +10,17 @@ echo "$all_tsv_files" | shuf | while read -r file; do
   for i in {1..10}; do
     clear
 
-    echo "### [${current_tsv_index}/${total_tsv_files}] ${file}" # Added header
-    echo "### [${i}/10] bash finyap.bash --input $file "
+    echo "practice-scenarios.bash: [${current_tsv_index}/${total_tsv_files}] ${file}" # Added header
+    echo "practice-scenarios.bash: [${i}/10] bash finyap.bash --input $file "
+
     echo ""
+    echo "============================================================"
     echo ""
-    echo ""
+
     bash finyap.bash --input "$file"
 
     echo ""
-    echo ""
-    echo ""
-    echo ""
+    echo "============================================================"
     echo ""
 
     read -p "Review your answer. Press Enter to continue, or type 'q' to quit. " user_input </dev/tty
