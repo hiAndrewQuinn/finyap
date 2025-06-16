@@ -321,15 +321,31 @@ for i in "${!words_in_sentence[@]}"; do
   export FZF_PREVIEW_TARGET_WORD="$target_word_for_matching"
   export FZF_PREVIEW_MASKED_SENTENCE="$masked_sentence_for_display"
 
-  # Show the user the current state before prompting for a guess
-  echo -e "$masked_sentence_for_display"
-
   # --- Run fzf ---
+  start_time=$(date +%s.%N)
   selected_word_from_fzf=$(echo "$all_finnish_words" |
     fzf --ignore-case --layout=reverse --border \
       --prompt="  ${ciphered_current} == " \
       --preview="bash -c 'run_fzf_preview \"\$1\" \"\$2\"' -- {q} {}" \
       --preview-window="up,65%,wrap,border-sharp")
+  end_time=$(date +%s.%N)
+
+  duration=$(awk -v s="$start_time" -v e="$end_time" 'BEGIN {print e-s}')
+  duration_int=$(printf "%.0f" "$duration") # Integer part for comparison
+
+  # Determine color based on time
+  time_color="$C_GREEN"
+  if [[ "$duration_int" -gt 10 ]]; then
+    time_color="$C_RED"
+  elif [[ "$duration_int" -gt 5 ]]; then
+    time_color="$C_YELLOW"
+  fi
+
+  formatted_time=$(printf "(%.1fs)" "$duration")
+  guess_time="${time_color}${formatted_time}${C_RESET}"
+
+  # ... redone echo here. So that it looks like: [10.3] Hän pirtää xUxUU.
+  echo -e "${guess_time} $masked_sentence_for_display"
 
   if [[ -z "$selected_word_from_fzf" ]]; then
     echo "${C_YELLOW}No word selected. Game aborted.${C_RESET}"
