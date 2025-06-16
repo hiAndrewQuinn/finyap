@@ -9,7 +9,7 @@
 # --- Configuration ---
 SENTENCE_FILE='example-sentences.tsv'
 SAMPLED_LINES_COUNT=100 # Number of lines to sample from the large file
-VERSION="0.0.2"
+FINYAP_VERSION="0.0.2"
 
 # --- Help and Version Functions ---
 show_help() {
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
     exit 0
     ;;
   --version)
-    echo "$(basename "$0") version $VERSION"
+    echo "$(basename "$0") version $FINYAP_VERSION"
     exit 0
     ;;
   --input)
@@ -67,6 +67,9 @@ C_GREEN=$'\033[1;32m'
 C_YELLOW=$'\033[1;33m'
 C_RED=$'\033[1;31m'
 C_PINK=$'\033[1;35m'
+C_BLUE=$'\033[1;34m'
+
+echo -e "${C_BLUE}finyap v${FINYAP_VERSION} - https://github.com/hiAndrewQuinn/finyap - https://finbug.xyz/ - https://andrew-quinn.me/${C_RESET}"
 
 # --- Sanity Checks ---
 if ! command -v fzf &>/dev/null; then
@@ -134,7 +137,7 @@ add_clitic_markers() {
   local temp_word="$word_to_process"
   local processed_clitics_part=""
   # List of clitics to check for, case-insensitively.
-  local clitics_list=("kaan" "kään" "kin" "han" "hän" "ko" "kö" "pa" "pä" "s")
+  local clitics_list=("kaan" "kään" "kin" "han" "hän" "ko" "kö" "pa" "pä")
 
   while true; do
     local found_in_pass=false
@@ -171,10 +174,13 @@ run_fzf_preview() {
   local selection_for_comparison="$current_fzf_selection"
 
   # Use `echo -e` to correctly render the ANSI color codes in the masked sentence.
+  echo -e "${C_BLUE}finyap v${FINYAP_VERSION} - https://github.com/hiAndrewQuinn/finyap - https://finbug.xyz/ - https://andrew-quinn.me/${C_RESET}"
+  echo ""
   echo -e "Sentence file: ${C_YELLOW}${SENTENCE_FILE}${C_RESET}"
   echo -e "Sentence:      $FZF_PREVIEW_MASKED_SENTENCE"
   echo "English:       $FZF_PREVIEW_ENGLISH_TRANSLATION"
   echo ""
+
   if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison" ]]; then
     echo "Typed so far:  ${C_GREEN}${query_for_comparison}${C_RESET}"
   elif [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison"* ]]; then
@@ -216,7 +222,7 @@ run_fzf_preview() {
 }
 # Export the functions and variables for the fzf subshell
 export -f run_fzf_preview print_finnish_flag
-export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK C_BG_HIGHLIGHT_YELLOW SENTENCE_FILE
+export C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK C_BG_HIGHLIGHT_YELLOW SENTENCE_FILE FINYAP_VERSION C_BLUE
 
 # --- 0. Pre-sample sentences from the large file ---
 echo "Sampling at most $SAMPLED_LINES_COUNT random lines from $SENTENCE_FILE..."
@@ -325,7 +331,7 @@ for i in "${!words_in_sentence[@]}"; do
   start_time=$(date +%s.%N)
   selected_word_from_fzf=$(echo "$all_finnish_words" |
     fzf --ignore-case --layout=reverse --border \
-      --prompt="  ${ciphered_current} == " \
+      --prompt="  ${ciphered_current} " \
       --preview="bash -c 'run_fzf_preview \"\$1\" \"\$2\"' -- {q} {}" \
       --preview-window="up,65%,wrap,border-sharp")
   end_time=$(date +%s.%N)
@@ -393,6 +399,7 @@ echo
 # Clean up exported variables and function
 unset FZF_PREVIEW_TARGET_WORD FZF_PREVIEW_MASKED_SENTENCE FZF_PREVIEW_ENGLISH_TRANSLATION
 unset C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK
+unset C_GREEN C_YELLOW C_RED C_RESET C_PINK C_HIGHLIGHT C_BG_HIGHLIGHT_PINK C_BG_HIGHLIGHT_YELLOW SENTENCE_FILE FINYAP_VERSION
 unset -f run_fzf_preview print_finnish_flag
 
 exit 0
