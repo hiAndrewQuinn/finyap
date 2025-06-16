@@ -355,11 +355,11 @@ for i in "${!words_in_sentence[@]}"; do
     time_color="$C_YELLOW"
   fi
 
-  formatted_time=$(printf "(%.1fs)" "$duration")
+  formatted_time=$(printf "(%6.1fs)" "$duration")
   guess_time="${time_color}${formatted_time}${C_RESET}"
 
   # ... redone echo here. So that it looks like: [10.3] Hän pirtää xUxUU.
-  echo -e "${guess_time} $masked_sentence_for_display"
+  echo -e "${guess_time} $masked_sentence_for_display    <-    ${time_color}${target_word_original}${C_RESET}"
 
   if [[ -z "$selected_word_from_fzf" ]]; then
     echo "${C_YELLOW}No word selected. Game aborted.${C_RESET}"
