@@ -1,0 +1,101 @@
+Internet-yhteyteni ei toimi.	My internet connection is not working.
+Nettiyhteys on poikki.	The internet connection is down.
+En pääse internetiin.	I can't get online.
+Yhteys on todella hidas.	The connection is really slow.
+Miksi internet on näin hidas tänään?	Why is the internet so slow today?
+Wi-Fi-signaali on erittäin heikko.	The Wi-Fi signal is very weak.
+Yhteys pätkii jatkuvasti.	The connection keeps dropping.
+Oletko kokeillut käynnistää reitittimen uudelleen?	Have you tried restarting the router?
+Kokeile sammuttaa ja käynnistää modeemi uudelleen.	Try turning the modem off and on again.
+Modeemin uudelleenkäynnistys saattaa auttaa.	Rebooting the modem might help.
+Ovatko kaikki kaapelit kunnolla kiinni?	Are all the cables connected properly?
+Tarkista, että verkkokaapeli on kunnolla kytketty.	Check that the network cable is properly plugged in.
+Onko virtajohto seinässä?	Is the power cord in the wall?
+Mitkä valot palavat reitittimessä?	Which lights are on on the router?
+DSL-valo vilkkuu, mitä se tarkoittaa?	The DSL light is blinking, what does that mean?
+Ongelma saattaa olla palveluntarjoajassa.	The problem might be with the service provider.
+Pitäisikö minun soittaa internetyhteyden tarjoajalle?	Should I call the internet service provider?
+Alueellamme saattaa olla palvelukatkos.	There might be an outage in our area.
+Tehdäänpä nopeustesti.	Let's run a speed test.
+Voimmeko tarkistaa yhteyden nopeuden?	Can we check the connection speed?
+Latausnopeus on todella alhainen.	The download speed is really low.
+Lähetysnopeus on melkein nolla.	The upload speed is almost zero.
+Unohdin Wi-Fi-salasanan.	I've forgotten the Wi-Fi password.
+Mikä tämän verkon salasana on?	What's the password for this network?
+Mistä näen langattoman verkon salasanan?	Where can I see the Wi-Fi password?
+Tietokoneeni ei yhdistä Wi-Fi-verkkoon.	My computer is not connecting to the Wi-Fi.
+Puhelimeni yhdistää, mutta kannettava tietokoneeni ei.	My phone connects, but my laptop doesn't.
+Laite ei löydä verkkoa.	The device can't find the network.
+Verkko näkyy listalla, mutta en voi yhdistää siihen.	The network is on the list, but I can't connect to it.
+Kokeillaan vaihtaa Wi-Fi-kanavaa.	Let's try changing the Wi-Fi channel.
+Ehkä verkossa on liikaa häiriöitä.	Maybe there's too much interference on the network.
+Naapurin verkot saattavat aiheuttaa ongelmia.	The neighbours' networks might be causing problems.
+Reitittimen laiteohjelmisto pitäisi ehkä päivittää.	The router's firmware might need to be updated.
+Onko reitittimen ohjelmisto ajan tasalla?	Is the router's software up to date?
+Yritän etsiä uutta laiteohjelmistoversiota.	I'll try to find a new firmware version.
+IP-osoitteen saamisessa on ongelma.	There is a problem obtaining an IP address.
+Verkon vianmääritys ei löytänyt ongelmia.	The network troubleshooter didn't find any problems.
+Selain sanoo "Ei internetyhteyttä".	The browser says "No internet connection".
+Sivut eivät lataudu ollenkaan.	The pages aren't loading at all.
+Vain osa sivuista toimii.	Only some of the websites work.
+Yhteys toimi vielä eilen moitteettomasti.	The connection was working perfectly yesterday.
+Tämä on todella turhauttavaa.	This is really frustrating.
+Tarvitsen internetiä työtä varten.	I need the internet for work.
+Voitko auttaa minua tämän kanssa?	Can you help me with this?
+En ymmärrä, mikä tässä on vikana.	I don't understand what's wrong with this.
+Pitäisikö meidän resetoida reititin tehdasasetuksille?	Should we reset the router to factory settings?
+Jos resetoimme sen, menetämme kaikki asetukset.	If we reset it, we will lose all the settings.
+Soitan asiakaspalveluun.	I'm calling customer service.
+Mikä on palveluntarjoajan tukinumero?	What is the provider's support number?
+Heidän jonotus aikansa on todella pitkä.	Their queue time is really long.
+Asiakaspalvelu pyysi minua tarkistamaan kaapelit uudelleen.	Customer service asked me to check the cables again.
+He tekevät etädiagnostiikan linjalle.	They are running remote diagnostics on the line.
+He sanoivat, että vika on heidän päässään.	They said the fault is on their end.
+Korjaaja tulee huomenna.	A technician is coming tomorrow.
+Onko mahdollista käyttää puhelimen hotspot-yhteyttä?	Is it possible to use the phone's hotspot?
+Käytän mobiilidataa toistaiseksi.	I'll use mobile data for now.
+Mobiilidata on myös hidas täällä sisällä.	The mobile data is also slow in here.
+Ehkä reititin on liian vanha.	Maybe the router is too old.
+Pitäisikö meidän ostaa uusi reititin?	Should we buy a new router?
+Tämä uusi reititin pitäisi olla tehokkaampi.	This new router should be more powerful.
+Wi-Fi-vahvistin voisi parantaa signaalia yläkerrassa.	A Wi-Fi extender could improve the signal upstairs.
+Sijoita reititin keskeisempään paikkaan.	Place the router in a more central location.
+Älä pidä reititintä kaapissa.	Don't keep the router in a cabinet.
+Suuret metalliesineet voivat häiritä signaalia.	Large metal objects can interfere with the signal.
+Myös mikroaaltouuni voi aiheuttaa häiriöitä.	A microwave oven can also cause interference.
+Olen käynnistänyt tietokoneen uudelleen monta kertaa.	I have restarted the computer many times.
+Verkkosovitin ei ehkä toimi oikein.	The network adapter might not be working correctly.
+Kokeile päivittää verkkosovittimen ajurit.	Try updating the network adapter drivers.
+Voisitko yrittää yhdistää toisella laitteella?	Could you try to connect with another device?
+Tämä vahvistaa, että ongelma on tässä tietokoneessa.	This confirms that the problem is with this computer.
+DNS-palvelin ei ehkä vastaa.	The DNS server might not be responding.
+Kokeile vaihtaa julkiseen DNS-palvelimeen.	Try changing to a public DNS server.
+IP-osoitteen ristiriita verkossa on mahdollinen.	An IP address conflict on the network is possible.
+Vapauta ja uusi IP-osoite.	Release and renew the IP address.
+Tarkista palomuurin asetukset.	Check the firewall settings.
+Palomuuri saattaa estää yhteyden.	The firewall might be blocking the connection.
+Kokeile poistaa virustorjunta väliaikaisesti käytöstä.	Try disabling the antivirus temporarily.
+Yhteys on suojattu, mutta ei internet-yhteyttä.	The connection is secure, but there's no internet access.
+Ethernet-kaapeli saattaa olla viallinen.	The Ethernet cable might be faulty.
+Kokeile toisella kaapelilla.	Try with another cable.
+Langallinen yhteys toimii, mutta langaton ei.	The wired connection works, but the wireless one doesn't.
+Ongelma on selvästi Wi-Fi:ssä.	The problem is clearly with the Wi-Fi.
+Reitittimen asetussivulle ei pääse.	I can't access the router's settings page.
+Oletusyhdyskäytävä ei vastaa.	The default gateway is not responding.
+Kirjoitinko osoitteen oikein?	Did I type the address correctly?
+Olen unohtanut reitittimen käyttäjätunnuksen ja salasanan.	I've forgotten the router's username and password.
+Se löytyy yleensä reitittimen pohjasta.	It's usually found on the bottom of the router.
+Ping-komento osoitteeseen https://www.google.com/search?q=google.com ei toimi.	The ping command to https://www.google.com/search?q=google.com is not working.
+Paketit katoavat matkalla.	The packets are getting lost on the way.
+Vasteaika on todella korkea.	The latency is really high.
+Verkko on tunnistamaton.	The network is unidentified.
+Julkinen verkko vai yksityinen verkko?	Public network or private network?
+Verkkoprofiili on ehkä väärä.	The network profile might be wrong.
+Nyt se näyttää toimivan taas.	Now it seems to be working again.
+Yhteys palasi itsestään.	The connection came back by itself.
+Mikäköhän ongelman aiheutti?	I wonder what caused the problem.
+Toivottavasti se ei tapahdu uudelleen.	I hope it doesn't happen again.
+Tallennetaan tämä salasana varmuuden vuoksi.	Let's save this password just in case.
+Kiitos avustasi ongelmanratkaisussa.	Thank you for your help in troubleshooting.
+Vihdoinkin takaisin verkossa\!	Finally back online\!
+Nyt voin jatkaa töitäni.	Now I can continue with my work.
