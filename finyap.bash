@@ -69,7 +69,11 @@ C_RED=$'\033[1;31m'
 C_PINK=$'\033[1;35m'
 C_BLUE=$'\033[1;34m'
 
+echo ""
+echo ""
 echo -e "${C_BLUE}finyap v${FINYAP_VERSION} - https://github.com/hiAndrewQuinn/finyap - https://finbug.xyz/ - https://andrew-quinn.me/${C_RESET}"
+echo ""
+echo ""
 
 # --- Sanity Checks ---
 if ! command -v fzf &>/dev/null; then
@@ -174,13 +178,12 @@ run_fzf_preview() {
   local selection_for_comparison="$current_fzf_selection"
 
   # Use `echo -e` to correctly render the ANSI color codes in the masked sentence.
-  echo -e "${C_BLUE}finyap v${FINYAP_VERSION} - https://github.com/hiAndrewQuinn/finyap - https://finbug.xyz/ - https://andrew-quinn.me/${C_RESET}"
+  echo -e "${C_BLUE}finyap v${FINYAP_VERSION} - $(date +%Y-%m-%d)${C_RESET}"
   echo ""
   echo -e "Sentence file: ${C_YELLOW}${SENTENCE_FILE}${C_RESET}"
   echo -e "Sentence:      $FZF_PREVIEW_MASKED_SENTENCE"
   echo "English:       $FZF_PREVIEW_ENGLISH_TRANSLATION"
   echo ""
-
   if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison" ]]; then
     echo "Typed so far:  ${C_GREEN}${query_for_comparison}${C_RESET}"
   elif [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison"* ]]; then
@@ -188,6 +191,8 @@ run_fzf_preview() {
   else
     echo "Typed so far:  ${C_RED}${query_for_comparison}${C_RESET}"
   fi
+  echo ""
+  echo ""
 
   if [[ -n "$selection_for_comparison" && "$selection_for_comparison" == "$FZF_PREVIEW_TARGET_WORD" ]]; then
     if [[ "$FZF_PREVIEW_TARGET_WORD" == "$query_for_comparison" ]]; then
@@ -333,7 +338,9 @@ for i in "${!words_in_sentence[@]}"; do
     fzf --ignore-case --layout=reverse --border \
       --prompt="  ${ciphered_current} " \
       --preview="bash -c 'run_fzf_preview \"\$1\" \"\$2\"' -- {q} {}" \
-      --preview-window="up,65%,wrap,border-sharp")
+      --header="${C_BLUE}https://github.com/hiAndrewQuinn/finyap - https://finbug.xyz/ - https://andrew-quinn.me/${C_RESET}" \
+      --header-first \
+      --preview-window="up,80%,wrap,border-sharp")
   end_time=$(date +%s.%N)
 
   duration=$(awk -v s="$start_time" -v e="$end_time" 'BEGIN {print e-s}')
