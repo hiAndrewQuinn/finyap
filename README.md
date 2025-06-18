@@ -3,9 +3,18 @@ Learn Finnish by writing Finnish. With guardrails, of course.
 
 ![output](https://github.com/user-attachments/assets/d7fb47b3-ad88-41b9-9b40-da1bd4dfa725)
 
+## How it looks
+
+The above GIF is actually from v0.0.1 of the game (it feels like a game to us, at least). We keep it here because it's so stripped down there's almost nothing to do *but* focus on the core gameplay loop. Here are some shots of it slowed down.
+
 ![output-slow](https://github.com/user-attachments/assets/56d67e19-3b72-4bd0-ba6b-d50dd3d84e10)
 
 ![output-slower](https://github.com/user-attachments/assets/b00170ab-2675-453a-8b48-48f4081389e3)
+
+v0.0.2 added both **timing**, so you can see which words were harder and which words were eaiser for you to guess, as well as **scenarios** and a `practice-scenarios.bash` script, which runs through a all of the scenarios a handful of times. This GIF shows a brief play session using the practice scenarios script.
+
+![output-finyap](https://github.com/user-attachments/assets/787eb9e5-194a-450e-8e6c-001320e7c50f)
+
 
 ## Requirements
 
