@@ -15,6 +15,10 @@ v0.0.2 added both **timing**, so you can see which words were harder and which w
 
 ![output-finyap](https://github.com/user-attachments/assets/787eb9e5-194a-450e-8e6c-001320e7c50f)
 
+And again, 10x slower this time:
+
+![output-finyap-slower](https://github.com/user-attachments/assets/97c96e1c-ff40-4a30-92bb-77c938fbcc47)
+
 
 ## Requirements
 
