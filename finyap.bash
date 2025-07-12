@@ -103,6 +103,16 @@ print_finnish_flag() {
   echo -e "${b}                   ${r}"
   echo -e "${w}     ${b}   ${w}           ${r}"
   echo -e "${w}     ${b}   ${w}           ${r}"
+  echo ""
+  echo -e '+----------------------------------------------------------------+'
+  echo -e '|                                                                |'
+  echo -e '| m    m   "      m           mmmmmm          m                  |'
+  echo -e '| #    # mmm    mm#mm         #      m mm   mm#mm   mmm    m mm  |'
+  echo -e '| #mmmm#   #      #           #mmmmm #"  #    #    #"  #   #"  " |'
+  echo -e '| #    #   #      #           #      #   #    #    #""""   #     |'
+  echo -e '| #    # mm#mm    "mm         #mmmmm #   #    "mm  "#mm"   #     |'
+  echo -e '|                                                                |'
+  echo -e '+----------------------------------------------------------------+'
 }
 
 # --- Helper function to clean a word for matching ---
