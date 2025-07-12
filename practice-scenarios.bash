@@ -7,11 +7,17 @@ echo " Finnish Yap Practice Scenarios"
 echo "============================================================"
 echo ""
 
-# 1. Ask for the number of loops per scenario
+if ! command -v fzf &> /dev/null; then
+    echo "Error: fzf is not installed. It's required for file selection."
+    echo "On macOS, run: brew install fzf"
+    echo "On Debian/Ubuntu, run: sudo apt-get install fzf"
+    echo "Aborting."
+    exit 1
+fi
+
 read -p "Enter number of reviews per scenario [10]: " user_loop_count
-# Use 10 if the input is empty, otherwise use the user's input.
 loop_count=${user_loop_count:-10}
-# Basic validation to ensure the input is a positive integer.
+
 if ! [[ "$loop_count" =~ ^[0-9]+$ ]]; then
     echo "Invalid input. Defaulting to 10."
     loop_count=10
@@ -40,18 +46,15 @@ if [[ -z "$process_all" || "$process_all" == "y" || "$process_all" == "Y" ]]; th
     files_to_process="$all_tsv_files"
 else
     # Check if fzf is installed before attempting to use it
-    if ! command -v fzf &> /dev/null; then
-        echo "Error: fzf is not installed. It's required for file selection."
-        echo "On macOS, run: brew install fzf"
-        echo "On Debian/Ubuntu, run: sudo apt-get install fzf"
-        echo "Aborting."
-        exit 1
-    fi
     echo "Use TAB to select/deselect files, then press Enter to confirm."
     sleep 1 # Give user a moment to read the instructions
     
     # Use fzf for interactive, fuzzy file selection
-    files_to_process=$(echo "$all_tsv_files" | fzf --multi --height 50% --border --prompt="Select scenarios> ")
+    files_to_process=$(echo "$all_tsv_files" | fzf \
+        --multi \
+        --border \
+        --prompt="Select scenarios> " \
+        --preview="bash -c '$PAGER {}'")
 fi
 
 # Exit if no files were selected from the fzf prompt
