@@ -7,32 +7,32 @@ echo " Finnish Yap Practice Scenarios"
 echo "============================================================"
 echo ""
 
-if ! command -v fzf &> /dev/null; then
-    echo "Error: fzf is not installed. It's required for file selection."
-    echo "On macOS, run: brew install fzf"
-    echo "On Debian/Ubuntu, run: sudo apt-get install fzf"
-    echo "Aborting."
-    exit 1
+if ! command -v fzf &>/dev/null; then
+  echo "Error: fzf is not installed. It's required for file selection."
+  echo "On macOS, run: brew install fzf"
+  echo "On Debian/Ubuntu, run: sudo apt-get install fzf"
+  echo "Aborting."
+  exit 1
 fi
 
 read -p "Enter number of reviews per scenario [10]: " user_loop_count
 loop_count=${user_loop_count:-10}
 
 if ! [[ "$loop_count" =~ ^[0-9]+$ ]]; then
-    echo "Invalid input. Defaulting to 10."
-    loop_count=10
+  echo "Invalid input. Defaulting to 10."
+  loop_count=10
 fi
 echo ""
 
 # 2. Find all TSV files and ask the user which ones to process
-all_tsv_files=$(find scenarios/ -name "*.tsv" | sort)
+all_tsv_files=$(find scenarios/ -name "*.tsv" | shuf)
 total_available_files=$(echo "$all_tsv_files" | wc -l | xargs) # xargs trims whitespace
 
 # Exit if no .tsv files are found
 if [ "$total_available_files" -eq 0 ]; then
-    echo "Error: No .tsv files found in the 'scenarios/' directory."
-    echo "Please ensure your scenario files are present before running."
-    exit 1
+  echo "Error: No .tsv files found in the 'scenarios/' directory."
+  echo "Please ensure your scenario files are present before running."
+  exit 1
 fi
 
 echo "Found ${total_available_files} scenarios."
@@ -43,28 +43,27 @@ files_to_process=""
 
 # Default to 'y' (process all) if input is empty or 'y'/'Y'
 if [[ -z "$process_all" || "$process_all" == "y" || "$process_all" == "Y" ]]; then
-    files_to_process="$all_tsv_files"
+  files_to_process="$all_tsv_files"
 else
-    # Check if fzf is installed before attempting to use it
-    echo "Use TAB to select/deselect files, then press Enter to confirm."
-    sleep 1 # Give user a moment to read the instructions
-    
-    # Use fzf for interactive, fuzzy file selection
-    files_to_process=$(echo "$all_tsv_files" | fzf \
-        --multi \
-        --border \
-        --prompt="Select scenarios> " \
-        --preview="bash -c '$PAGER {}'")
+  # Check if fzf is installed before attempting to use it
+  echo "Use TAB to select/deselect files, then press Enter to confirm."
+  sleep 1 # Give user a moment to read the instructions
+
+  # Use fzf for interactive, fuzzy file selection
+  files_to_process=$(echo "$all_tsv_files" | fzf \
+    --multi \
+    --border \
+    --prompt="Select scenarios> " \
+    --preview="bash -c '$PAGER {}'")
 fi
 
 # Exit if no files were selected from the fzf prompt
 if [ -z "$files_to_process" ]; then
-    echo "No files selected. Exiting."
-    exit 0
+  echo "No files selected. Exiting."
+  exit 0
 fi
 
 # --- END OF SETUP SECTION ---
-
 
 # Count the number of files that will actually be processed
 total_tsv_files=$(echo "$files_to_process" | wc -l | xargs)
@@ -78,9 +77,9 @@ fi
 # Iterate over the (potentially shuffled) list of selected files
 echo "$files_to_process" | shuf | while read -r file; do
   current_tsv_index=$((current_tsv_index + 1))
-  
+
   # Use the user-defined loop count
-  for ((i=1; i<=loop_count; i++)); do
+  for ((i = 1; i <= loop_count; i++)); do
     clear
 
     # Update progress display with the correct total and loop count
@@ -93,6 +92,15 @@ echo "$files_to_process" | shuf | while read -r file; do
 
     # Capture the output of finyap.bash into a variable so we can parse it later.
     script_output=$(bash finyap.bash --input "$file")
+
+    finnish_sentence=$(echo "$script_output" | grep "Finnish:" | sed 's/Finnish: //')
+    english_sentence=$(echo "$script_output" | grep "English:" | sed 's/English: //')
+    # real time tts
+    # { echo $finnish_sentence |
+    #   /home/andrew/Downloads/piper_linux_x86_64/piper/piper \
+    #     --model /home/andrew/Downloads/piper_linux_x86_64/piper/fi_FI-harri-medium.onnx --output-raw |
+    #   aplay -r 22050 -f S16_LE -c 1 -q; } >/dev/null 2>&1 &
+
     echo "$script_output"
 
     echo ""
@@ -112,8 +120,6 @@ echo "$files_to_process" | shuf | while read -r file; do
       continue
     elif [[ "$user_input" == "c" || "$user_input" == "C" ]]; then
       # Use 'grep' to find the lines with the sentences and 'sed' to remove the labels.
-      finnish_sentence=$(echo "$script_output" | grep "Finnish:" | sed 's/Finnish: //')
-      english_sentence=$(echo "$script_output" | grep "English:" | sed 's/English: //')
 
       # Append the file path and the extracted sentences as a new line in check.csv.
       # The fields are quoted to prevent issues if a sentence contains a comma.
