@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json" // NEW: Added for marshalling analytics data.
 	"fmt"
 	"io/fs"
 	"log"
@@ -64,6 +65,22 @@ const (
 	stateRoundOver
 )
 
+// NEW: wordAttemptData holds analytics for a single word attempt within a round.
+type wordAttemptData struct {
+	WordIndex int
+	UserInput string // The raw user input for detailed error analysis.
+	IsCorrect bool
+	Duration  time.Duration
+}
+
+// NEW: WordAttemptDetail is the structure used for marshalling analytics data to JSON.
+type WordAttemptDetail struct {
+	WordIndex  int    `json:"wordIndex"`
+	UserInput  string `json:"userInput"`
+	IsCorrect  bool   `json:"isCorrect"`
+	DurationMs int64  `json:"durationMs"`
+}
+
 // model is the core of our Bubbletea application, holding all state.
 type model struct {
 	db          *sql.DB
@@ -78,6 +95,10 @@ type model struct {
 	// Game progression
 	sentenceIdx int
 	wordIdx     int
+
+	// NEW: Analytics state for the current round.
+	wordStartTime  time.Time
+	roundAnalytics []wordAttemptData
 }
 
 // --- CORE LOGIC & HELPERS ---
@@ -156,8 +177,8 @@ func diffStrings(input, target string) (string, string) {
 			// Case-insensitive comparison
 			if unicode.ToLower(inputRune) == unicode.ToLower(targetRune) {
 				// Characters match (ignoring case), apply default styles.
-				inputStyled.WriteString(styleIncorrect.Render(string(inputRune))) // Changed this line
-				targetStyled.WriteString(styleCorrect.Render(string(targetRune)))
+				inputStyled.WriteString(string(inputRune))
+				targetStyled.WriteString(string(targetRune))
 			} else {
 				// Characters are different, apply reverse video diff styles
 				inputStyled.WriteString(styleInputDiff.Render(string(inputRune)))
@@ -186,12 +207,14 @@ func newModel(db *sql.DB, sentences []Sentence) model {
 	ti.Prompt = "" // We render the prompt manually for alignment.
 
 	return model{
-		db:          db,
-		sentences:   sentences,
-		textInput:   ti,
-		state:       statePlaying,
-		sentenceIdx: 0,
-		wordIdx:     0,
+		db:             db,
+		sentences:      sentences,
+		textInput:      ti,
+		state:          statePlaying,
+		sentenceIdx:    0,
+		wordIdx:        0,
+		wordStartTime:  time.Now(),                 // NEW: Initialize timer for the very first word.
+		roundAnalytics: make([]wordAttemptData, 0), // NEW: Initialize analytics slice.
 	}
 }
 
@@ -215,6 +238,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wordIdx = 0
 				m.sentenceIdx = (m.sentenceIdx + 1) % len(m.sentences) // Cycle through sentences
 				m.textInput.SetValue("")
+
+				// NEW: Reset analytics for the new round.
+				m.roundAnalytics = make([]wordAttemptData, 0)
+				m.wordStartTime = time.Now()
+
 				return m, nil
 			}
 
@@ -222,22 +250,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			currentSentence := m.sentences[m.sentenceIdx]
 			targetWord := currentSentence.CleanWords[m.wordIdx]
 			userInput := cleanWord(m.textInput.Value())
+			isCorrect := (userInput == targetWord)
 
-			m.roundResult.isCorrect = (userInput == targetWord)
+			// NEW: Capture analytics for this specific word attempt.
+			duration := time.Since(m.wordStartTime)
+			attempt := wordAttemptData{
+				WordIndex: m.wordIdx,
+				UserInput: m.textInput.Value(), // Log raw input for detailed error review.
+				IsCorrect: isCorrect,
+				Duration:  duration,
+			}
+			m.roundAnalytics = append(m.roundAnalytics, attempt)
 
-			// Log the attempt to the database
-			logPlay(m.db, currentSentence.ID, m.roundResult.isCorrect)
+			m.roundResult.isCorrect = isCorrect // For the view.
 
-			if m.roundResult.isCorrect {
+			// Log the individual word attempt (old system, still useful for SR).
+			logPlay(m.db, currentSentence.ID, isCorrect)
+
+			if isCorrect {
 				m.wordIdx++
 				m.textInput.SetValue("")
+				m.wordStartTime = time.Now() // Reset timer for the next word.
 
 				// Check if the whole sentence is complete
 				if m.wordIdx >= len(currentSentence.Words) {
 					m.state = stateRoundOver // Transition to success screen
+					// NEW: Log the full, successful sentence result to the database.
+					logSentenceResult(m.db, currentSentence.ID, true, m.roundAnalytics)
 				}
 			} else {
 				m.state = stateRoundOver // Transition to failure screen
+				// NEW: Log the full, failed sentence result to the database.
+				logSentenceResult(m.db, currentSentence.ID, false, m.roundAnalytics)
 			}
 			return m, nil
 		}
@@ -266,7 +310,6 @@ func (m model) View() string {
 	return m.viewPlaying()
 }
 
-// viewPlaying renders the main game screen.
 // viewPlaying renders the main game screen.
 func (m model) viewPlaying() string {
 	var b strings.Builder
@@ -354,8 +397,8 @@ func (m model) viewRoundOver() string {
 		styledInput, styledTarget := diffStrings(userInput, targetWord)
 
 		b.WriteString(styleIncorrect.Render("❌ Not quite."))
-		b.WriteString(fmt.Sprintf("\nYour input:     %s", styledInput))
-		b.WriteString(fmt.Sprintf("\nCorrect word:   %s", styledTarget))
+		b.WriteString(fmt.Sprintf("\nYour input:   %s", styledInput))
+		b.WriteString(fmt.Sprintf("\nCorrect word: %s", styledTarget))
 	}
 
 	b.WriteString("\n\nFull sentence:\n")
@@ -398,9 +441,7 @@ func initDB() (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Create tables if they don't exist.
 	// `sentences` stores the canonical list of sentences.
-	// `plays` logs every attempt for future analysis (e.g., spaced repetition).
 	createSentencesTableSQL := `
 	CREATE TABLE IF NOT EXISTS sentences (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -409,6 +450,7 @@ func initDB() (*sql.DB, error) {
 		english TEXT NOT NULL
 	);`
 
+	// `plays` logs every single attempt for granular spaced repetition analysis.
 	createPlaysTableSQL := `
 	CREATE TABLE IF NOT EXISTS plays (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -418,11 +460,23 @@ func initDB() (*sql.DB, error) {
 		FOREIGN KEY (sentence_id) REFERENCES sentences (id)
 	);`
 
-	if _, err := db.Exec(createSentencesTableSQL); err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec(createPlaysTableSQL); err != nil {
-		return nil, err
+	// NEW: `sentence_results` logs a summary of an entire sentence attempt,
+	// including detailed performance data for deliberate practice analysis.
+	createSentenceResultsTableSQL := `
+	CREATE TABLE IF NOT EXISTS sentence_results (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		sentence_id INTEGER NOT NULL,
+		completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		total_duration_ms INTEGER NOT NULL,
+		was_successful BOOLEAN NOT NULL,
+		attempt_details TEXT, -- This will be a JSON blob with word-by-word details.
+		FOREIGN KEY (sentence_id) REFERENCES sentences (id)
+	);`
+
+	for _, stmt := range []string{createSentencesTableSQL, createPlaysTableSQL, createSentenceResultsTableSQL} {
+		if _, err := db.Exec(stmt); err != nil {
+			return nil, err
+		}
 	}
 
 	return db, nil
@@ -468,8 +522,40 @@ func syncSentencesWithDB(db *sql.DB, sentences *[]Sentence) error {
 func logPlay(db *sql.DB, sentenceID int64, wasCorrect bool) {
 	_, err := db.Exec("INSERT INTO plays (sentence_id, was_correct) VALUES (?, ?)", sentenceID, wasCorrect)
 	if err != nil {
-		// In a real app, handle this more gracefully than logging to stderr.
 		log.Printf("Error logging play to DB: %v", err)
+	}
+}
+
+// NEW: logSentenceResult records the full analytics of a completed sentence round.
+func logSentenceResult(db *sql.DB, sentenceID int64, wasSuccessful bool, attempts []wordAttemptData) {
+	var totalDuration time.Duration
+	details := make([]WordAttemptDetail, len(attempts))
+
+	for i, attempt := range attempts {
+		totalDuration += attempt.Duration
+		details[i] = WordAttemptDetail{
+			WordIndex:  attempt.WordIndex,
+			UserInput:  attempt.UserInput,
+			IsCorrect:  attempt.IsCorrect,
+			DurationMs: attempt.Duration.Milliseconds(),
+		}
+	}
+
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		log.Printf("Error marshalling sentence result details to JSON: %v", err)
+		return
+	}
+
+	_, err = db.Exec(
+		"INSERT INTO sentence_results (sentence_id, was_successful, total_duration_ms, attempt_details) VALUES (?, ?, ?, ?)",
+		sentenceID,
+		wasSuccessful,
+		totalDuration.Milliseconds(),
+		string(detailsJSON),
+	)
+	if err != nil {
+		log.Printf("Error logging sentence result to DB: %v", err)
 	}
 }
 
