@@ -263,10 +263,10 @@ func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
 		}
 	}
 
+	// Always start the cursor at the top of the list (index 0).
+	// This provides a more conventional user experience and fixes the issue
+	// where the top-played scenarios were not immediately visible.
 	cursor := 0
-	if len(stats) > 0 {
-		cursor = len(stats) - 1 // Start at the bottom
-	}
 
 	m := model{
 		db:                   db,
@@ -283,7 +283,7 @@ func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
 		viewportHeight:       15, // How many items to show at once
 	}
 
-	m.updateViewport() // Set initial viewport based on cursor
+	m.updateViewport() // This will now correctly position the view at the top.
 	return m
 }
 
@@ -880,16 +880,14 @@ func main() {
 		log.Fatalf("Failed to get scenario stats: %v", err)
 	}
 
-	// MODIFIED: Use the new function
-	sortedStats := sortStats(stats)
-
 	if len(sentences) == 0 && len(stats) == 0 {
 		fmt.Printf("No sentences found in '%s' directory. Exiting.\n", scenariosDir)
 		os.Exit(0)
 	}
 
-	// MODIFIED: Pass the sorted stats to the model
-	p := tea.NewProgram(newModel(db, sentences, sortedStats))
+	// Initialize the program, ensuring the stats are sorted by play count before being passed to the model.
+	// This removes the intermediate `sortedStats` variable to prevent potential mix-ups.
+	p := tea.NewProgram(newModel(db, sentences, sortStats(stats)))
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Error running program: %v", err)
 	}
