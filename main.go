@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,15 +31,17 @@ var CLITICS = []string{"kaan", "kään", "kin", "han", "hän", "ko", "kö", "pa"
 // --- STYLING (using Lipgloss) ---
 
 var (
-	styleCorrect   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)                      // Green
-	styleIncorrect = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)                       // Red
-	stylePartial   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)                      // Yellow
-	styleHighlight = lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("0")) // Green background
-	styleClitic    = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))                                 // Pink/Magenta
-	styleSubtle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleHeader    = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	styleError     = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(1)
-	wordSeparator  = " "
+	styleCorrect     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)                      // Green
+	styleIncorrect   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)                       // Red
+	stylePartial     = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)                      // Yellow
+	styleHighlight   = lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("0")) // Green background
+	styleClitic      = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))                                 // Pink/Magenta
+	styleSubtle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styleHeader      = lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	styleError       = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(1)
+	styleInputDiff   = lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("0"))  // Red BG
+	styleCorrectDiff = lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")) // Green BG
+	wordSeparator    = " "
 )
 
 // --- DATA STRUCTURES ---
@@ -129,6 +132,46 @@ func applyCliticStyling(word string) string {
 		}
 	}
 	return stem + strings.Join(styledClitics, "")
+}
+
+// diffStrings creates two styled strings showing a character-by-character comparison.
+func diffStrings(input, target string) (string, string) {
+	var inputStyled, targetStyled strings.Builder
+	runesInput := []rune(input)
+	runesTarget := []rune(target)
+
+	maxLen := len(runesInput)
+	if len(runesTarget) > maxLen {
+		maxLen = len(runesTarget)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		inputInBounds := i < len(runesInput)
+		targetInBounds := i < len(runesTarget)
+
+		if inputInBounds && targetInBounds {
+			inputRune := runesInput[i]
+			targetRune := runesTarget[i]
+
+			// Case-insensitive comparison
+			if unicode.ToLower(inputRune) == unicode.ToLower(targetRune) {
+				// Characters match (ignoring case), apply default styles.
+				inputStyled.WriteString(styleIncorrect.Render(string(inputRune))) // Changed this line
+				targetStyled.WriteString(styleCorrect.Render(string(targetRune)))
+			} else {
+				// Characters are different, apply reverse video diff styles
+				inputStyled.WriteString(styleInputDiff.Render(string(inputRune)))
+				targetStyled.WriteString(styleCorrectDiff.Render(string(targetRune)))
+			}
+		} else if inputInBounds {
+			// Input is longer, this is a mistake
+			inputStyled.WriteString(styleInputDiff.Render(string(runesInput[i])))
+		} else if targetInBounds {
+			// Target is longer, this is a mistake
+			targetStyled.WriteString(styleCorrectDiff.Render(string(runesTarget[i])))
+		}
+	}
+	return inputStyled.String(), targetStyled.String()
 }
 
 // --- BUBBLETEA IMPLEMENTATION ---
@@ -304,9 +347,15 @@ func (m model) viewRoundOver() string {
 	if m.roundResult.isCorrect {
 		b.WriteString(styleCorrect.Render("🎉 Correct! You completed the sentence."))
 	} else {
+		userInput := m.textInput.Value()
+		targetWord := currentSentence.Words[m.wordIdx]
+
+		// Generate the styled diffs
+		styledInput, styledTarget := diffStrings(userInput, targetWord)
+
 		b.WriteString(styleIncorrect.Render("❌ Not quite."))
-		b.WriteString(fmt.Sprintf("\nYour input:   %s", styleIncorrect.Render(m.textInput.Value())))
-		b.WriteString(fmt.Sprintf("\nCorrect word: %s", styleCorrect.Render(currentSentence.Words[m.wordIdx])))
+		b.WriteString(fmt.Sprintf("\nYour input:     %s", styledInput))
+		b.WriteString(fmt.Sprintf("\nCorrect word:   %s", styledTarget))
 	}
 
 	b.WriteString("\n\nFull sentence:\n")
