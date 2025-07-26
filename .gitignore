@@ -1,2 +1,6 @@
 check.csv
 scenarios/personal_*
+
+
+*.db
+finyap-go
