@@ -89,6 +89,11 @@ type WordAttemptDetail struct {
 	DurationMs int64  `json:"durationMs"`
 }
 
+type statsReloadedMsg struct {
+	stats []ScenarioStat
+	err   error
+}
+
 type model struct {
 	db                   *sql.DB
 	textInput            textinput.Model // This is for the game state
@@ -203,6 +208,18 @@ func (m *model) applyFilter() {
 	m.updateViewport()
 }
 
+// ADDED: This command fetches stats from the DB and sends a message when complete.
+func reloadStatsCmd(db *sql.DB) tea.Cmd {
+	return func() tea.Msg {
+		stats, err := getScenarioStats(db)
+		if err != nil {
+			return statsReloadedMsg{err: err}
+		}
+		sortedStats := sortStats(stats) // Use our refactored sorting logic
+		return statsReloadedMsg{stats: sortedStats}
+	}
+}
+
 func (m *model) updateViewport() {
 	if len(m.filteredStats) == 0 {
 		m.viewportStart = 0
@@ -290,9 +307,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
-	// Handle navigation and actions first.
-	// These should not be passed to the filter input.
-	if msg, ok := msg.(tea.KeyMsg); ok {
+	switch msg := msg.(type) {
+	// ADDED: Handle the message from our command to refresh stats
+	case statsReloadedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.scenarioStats = msg.stats
+		m.applyFilter() // Re-apply filter and reset cursor/viewport for the new stats
+		return m, nil
+
+	case tea.KeyMsg:
+		// These keys are for navigation and actions, not for the text input.
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
@@ -312,13 +339,13 @@ func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyCtrlA:
-			for _, stat := range m.filteredStats { // Act on the filtered list
+			for _, stat := range m.filteredStats {
 				m.selectedScenarios[stat.Name] = true
 			}
 			return m, nil
 
 		case tea.KeyCtrlD:
-			m.selectedScenarios = make(map[string]bool) // Deselect all
+			m.selectedScenarios = make(map[string]bool)
 			return m, nil
 
 		case tea.KeyTab:
@@ -361,12 +388,13 @@ func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.roundAnalytics = make([]wordAttemptData, 0)
 				m.wordStartTime = time.Now()
 				m.textInput.Focus() // Switch focus to game input
+				m.textInput.SetValue("")
 			}
 			return m, nil
 		}
 	}
 
-	// Pass all other messages to the filter input.
+	// Pass all other messages to the filter text input.
 	oldFilter := m.filterInput.Value()
 	m.filterInput, cmd = m.filterInput.Update(msg)
 
@@ -383,8 +411,15 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+		case tea.KeyCtrlC:
 			return m, tea.Quit
+
+		// MODIFIED: Esc returns to menu and triggers a stat reload.
+		case tea.KeyEsc:
+			m.state = stateScenarioSelection
+			m.filterInput.Focus() // Give focus back to the filter input
+			return m, reloadStatsCmd(m.db)
+
 		case tea.KeyEnter:
 			if m.state == stateRoundOver {
 				m.state = statePlaying
@@ -395,11 +430,13 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wordStartTime = time.Now()
 				return m, nil
 			}
+
 			currentSentence := m.sessionSentences[m.sentenceIdx]
 			targetWord := currentSentence.CleanWords[m.wordIdx]
 			userInput := cleanWord(m.textInput.Value())
 			isCorrect := (userInput == targetWord)
 			duration := time.Since(m.wordStartTime)
+
 			attempt := wordAttemptData{
 				WordIndex: m.wordIdx,
 				UserInput: m.textInput.Value(),
@@ -408,7 +445,9 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.roundAnalytics = append(m.roundAnalytics, attempt)
 			m.roundResult.isCorrect = isCorrect
+
 			logPlay(m.db, currentSentence.ID, isCorrect)
+
 			if isCorrect {
 				m.wordIdx++
 				m.textInput.SetValue("")
@@ -427,6 +466,7 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg
 		return m, nil
 	}
+
 	m.textInput, cmd = m.textInput.Update(msg)
 	return m, cmd
 }
@@ -589,15 +629,25 @@ func renderLiveFeedback(input, target string) string {
 	if input == "" {
 		return ""
 	}
+
+	// Convert strings to rune slices to handle multi-byte characters correctly
+	inputRunes := []rune(input)
+	targetRunes := []rune(target)
+
 	var coloredChars []string
-	for i, r := range input {
-		if i >= len(target) {
+
+	for i, r := range inputRunes {
+		if i >= len(targetRunes) {
+			// Character is past the end of the target word
 			coloredChars = append(coloredChars, styleIncorrect.Render(string(r)))
 			continue
 		}
-		if r == rune(target[i]) {
+
+		if r == targetRunes[i] {
+			// The rune at this position matches
 			coloredChars = append(coloredChars, styleCorrect.Render(string(r)))
 		} else {
+			// Mismatch
 			coloredChars = append(coloredChars, styleIncorrect.Render(string(r)))
 		}
 	}
@@ -787,6 +837,29 @@ func loadSentencesFromTSV() ([]Sentence, error) {
 
 // --- MAIN FUNCTION ---
 
+func sortStats(stats []ScenarioStat) []ScenarioStat {
+	groupedStats := make(map[int][]ScenarioStat)
+	for _, s := range stats {
+		groupedStats[s.TotalPlays] = append(groupedStats[s.TotalPlays], s)
+	}
+
+	var playCounts []int
+	for pc := range groupedStats {
+		playCounts = append(playCounts, pc)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(playCounts)))
+
+	var sortedAndShuffledStats []ScenarioStat
+	for _, pc := range playCounts {
+		group := groupedStats[pc]
+		rand.Shuffle(len(group), func(i, j int) {
+			group[i], group[j] = group[j], group[i]
+		})
+		sortedAndShuffledStats = append(sortedAndShuffledStats, group...)
+	}
+	return sortedAndShuffledStats
+}
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	sentences, err := loadSentencesFromTSV()
@@ -807,37 +880,16 @@ func main() {
 		log.Fatalf("Failed to get scenario stats: %v", err)
 	}
 
-	// --- START: New sorting logic ---
-	// Group stats by their play count
-	groupedStats := make(map[int][]ScenarioStat)
-	for _, s := range stats {
-		groupedStats[s.TotalPlays] = append(groupedStats[s.TotalPlays], s)
-	}
-
-	// Get unique play counts and sort them in descending order
-	var playCounts []int
-	for pc := range groupedStats {
-		playCounts = append(playCounts, pc)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(playCounts)))
-
-	// Reassemble the list, shuffling within each play-count group
-	var sortedAndShuffledStats []ScenarioStat
-	for _, pc := range playCounts {
-		group := groupedStats[pc]
-		rand.Shuffle(len(group), func(i, j int) {
-			group[i], group[j] = group[j], group[i]
-		})
-		sortedAndShuffledStats = append(sortedAndShuffledStats, group...)
-	}
-	// --- END: New sorting logic ---
+	// MODIFIED: Use the new function
+	sortedStats := sortStats(stats)
 
 	if len(sentences) == 0 && len(stats) == 0 {
 		fmt.Printf("No sentences found in '%s' directory. Exiting.\n", scenariosDir)
 		os.Exit(0)
 	}
-	// Pass the sorted and shuffled stats to the model
-	p := tea.NewProgram(newModel(db, sentences, sortedAndShuffledStats))
+
+	// MODIFIED: Pass the sorted stats to the model
+	p := tea.NewProgram(newModel(db, sentences, sortedStats))
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Error running program: %v", err)
 	}
