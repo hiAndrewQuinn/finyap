@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv" // ADDED: For parsing sentence count
 	"strings"
 	"time"
 	"unicode"
@@ -67,10 +68,12 @@ type ScenarioStat struct {
 	SentencesInDB int
 }
 
+// MODIFIED: Added a new initial state for configuration.
 type gameState int
 
 const (
-	stateScenarioSelection gameState = iota
+	stateSentenceCountInput gameState = iota // New: Ask for sentence count first
+	stateScenarioSelection
 	statePlaying
 	stateRoundOver
 )
@@ -94,10 +97,12 @@ type statsReloadedMsg struct {
 	err   error
 }
 
+// MODIFIED: model struct now includes state for the new input screen.
 type model struct {
 	db                   *sql.DB
 	textInput            textinput.Model // This is for the game state
-	filterInput          textinput.Model // New: for the scenario filter
+	filterInput          textinput.Model // For the scenario filter
+	sentenceCountInput   textinput.Model // New: For sentence count per scenario
 	err                  error
 	state                gameState
 	allSentences         []Sentence
@@ -112,8 +117,9 @@ type model struct {
 	selectedScenarios    map[string]bool
 	cursor               int
 	maxScenarioNameWidth int
-	viewportStart        int // New: for scrolling
-	viewportHeight       int // New: for scrolling
+	viewportStart        int
+	viewportHeight       int
+	sentencesPerScenario int // New: Stores the number of sentences to play per scenario
 }
 
 // --- CORE LOGIC & HELPERS ---
@@ -141,6 +147,42 @@ func cipherWord(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// MODIFIED: Ciphers a word and styles the ciphered portion corresponding to a clitic.
+func cipherWordWithClitics(word string) string {
+	var foundClitics []string
+	stem := word
+
+	// First, peel off any clitics from the end of the real word, right-to-left.
+	for {
+		found := false
+		for _, clitic := range CLITICS {
+			if strings.HasSuffix(strings.ToLower(stem), clitic) {
+				cliticPart := stem[len(stem)-len(clitic):]
+				foundClitics = append([]string{cliticPart}, foundClitics...)
+				stem = stem[:len(stem)-len(clitic)]
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+	}
+
+	// Cipher the remaining stem of the word.
+	cipheredStem := cipherWord(stem)
+
+	// Cipher and then style the clitics that were found.
+	var styledClitics []string
+	for _, clitic := range foundClitics {
+		cipheredClitic := cipherWord(clitic)
+		styledClitics = append(styledClitics, styleClitic.Render(cipheredClitic))
+	}
+
+	// Combine the ciphered stem with the ciphered, styled clitics.
+	return cipheredStem + strings.Join(styledClitics, "")
 }
 
 func applyCliticStyling(word string) string {
@@ -208,14 +250,13 @@ func (m *model) applyFilter() {
 	m.updateViewport()
 }
 
-// ADDED: This command fetches stats from the DB and sends a message when complete.
 func reloadStatsCmd(db *sql.DB) tea.Cmd {
 	return func() tea.Msg {
 		stats, err := getScenarioStats(db)
 		if err != nil {
 			return statsReloadedMsg{err: err}
 		}
-		sortedStats := sortStats(stats) // Use our refactored sorting logic
+		sortedStats := sortStats(stats)
 		return statsReloadedMsg{stats: sortedStats}
 	}
 }
@@ -226,12 +267,10 @@ func (m *model) updateViewport() {
 		return
 	}
 
-	// If cursor is above the viewport, move viewport up
 	if m.cursor < m.viewportStart {
 		m.viewportStart = m.cursor
 	}
 
-	// If cursor is below the viewport, move viewport down
 	if m.cursor >= m.viewportStart+m.viewportHeight {
 		m.viewportStart = m.cursor - m.viewportHeight + 1
 	}
@@ -239,11 +278,11 @@ func (m *model) updateViewport() {
 
 // --- BUBBLETEA IMPLEMENTATION ---
 
+// MODIFIED: newModel now initializes the sentence count input and starts in that state.
 func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
 	// Game input
 	ti := textinput.New()
 	ti.Placeholder = "Type the word and press Enter..."
-	ti.Focus()
 	ti.CharLimit = 50
 	ti.Width = 50
 	ti.Prompt = ""
@@ -251,10 +290,18 @@ func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
 	// Filter input for scenario selection
 	filterInput := textinput.New()
 	filterInput.Placeholder = "Filter scenarios by name..."
-	filterInput.Focus()
 	filterInput.CharLimit = 50
 	filterInput.Width = 50
 	filterInput.Prompt = "> "
+
+	// New: Sentence count input
+	sentenceCountInput := textinput.New()
+	sentenceCountInput.Placeholder = "10"
+	sentenceCountInput.Prompt = "How many sentences per scenario? (default 10): "
+	sentenceCountInput.Focus() // Start with this input focused
+	sentenceCountInput.CharLimit = 3
+	sentenceCountInput.Width = 10
+	sentenceCountInput.SetValue("10")
 
 	maxWidth := 0
 	for _, s := range stats {
@@ -263,9 +310,6 @@ func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
 		}
 	}
 
-	// Always start the cursor at the top of the list (index 0).
-	// This provides a more conventional user experience and fixes the issue
-	// where the top-played scenarios were not immediately visible.
 	cursor := 0
 
 	m := model{
@@ -273,17 +317,18 @@ func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
 		allSentences:         sentences,
 		textInput:            ti,
 		filterInput:          filterInput,
-		state:                stateScenarioSelection,
-		scenarioStats:        stats, // The full, sorted list
-		filteredStats:        stats, // Initially, all stats are visible
+		sentenceCountInput:   sentenceCountInput,      // Add new field
+		state:                stateSentenceCountInput, // Set initial state
+		scenarioStats:        stats,
+		filteredStats:        stats,
 		selectedScenarios:    make(map[string]bool),
 		roundAnalytics:       make([]wordAttemptData, 0),
 		maxScenarioNameWidth: maxWidth,
 		cursor:               cursor,
-		viewportHeight:       15, // How many items to show at once
+		viewportHeight:       15,
 	}
 
-	m.updateViewport() // This will now correctly position the view at the top.
+	m.updateViewport()
 	return m
 }
 
@@ -291,8 +336,11 @@ func (m model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+// MODIFIED: The main Update function now routes to a handler for the new state.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.state {
+	case stateSentenceCountInput:
+		return m.updateSentenceCountInput(msg)
 	case stateScenarioSelection:
 		return m.updateScenarioSelection(msg)
 	case statePlaying, stateRoundOver:
@@ -302,24 +350,55 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// FIXED: Corrected the duplicate case for tea.KeyRunes
+// ADDED: This new function handles all logic for the initial sentence count input screen.
+func (m *model) updateSentenceCountInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyEsc:
+			return m, tea.Quit
+
+		case tea.KeyEnter:
+			val := m.sentenceCountInput.Value()
+			if val == "" {
+				val = "10" // Use default if empty
+			}
+
+			n, err := strconv.Atoi(val)
+			if err != nil || n <= 0 {
+				m.err = fmt.Errorf("invalid input: '%s'. Please enter a positive number", val)
+				return m, nil // Return without changing state, error will be displayed
+			}
+
+			m.sentencesPerScenario = n
+			m.err = nil // Clear any previous error
+			m.state = stateScenarioSelection
+			m.filterInput.Focus() // Now focus the scenario filter input
+			return m, textinput.Blink
+		}
+	}
+
+	m.sentenceCountInput, cmd = m.sentenceCountInput.Update(msg)
+	return m, cmd
+}
+
+// MODIFIED: The Enter key logic is rewritten to create sequential, scenario-based sessions.
 func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
-	// ADDED: Handle the message from our command to refresh stats
 	case statsReloadedMsg:
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
 		m.scenarioStats = msg.stats
-		m.applyFilter() // Re-apply filter and reset cursor/viewport for the new stats
+		m.applyFilter()
 		return m, nil
 
 	case tea.KeyMsg:
-		// These keys are for navigation and actions, not for the text input.
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
@@ -370,18 +449,50 @@ func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		// --- THIS ENTIRE CASE IS REWRITTEN ---
 		case tea.KeyEnter:
-			m.sessionSentences = []Sentence{}
-			for _, s := range m.allSentences {
-				if m.selectedScenarios[s.Scenario] {
-					m.sessionSentences = append(m.sessionSentences, s)
+			// Get selected scenarios in the order they are displayed in the full list
+			var orderedSelectedScenarios []string
+			for _, stat := range m.scenarioStats {
+				if m.selectedScenarios[stat.Name] {
+					orderedSelectedScenarios = append(orderedSelectedScenarios, stat.Name)
 				}
 			}
 
-			if len(m.sessionSentences) > 0 {
-				rand.Shuffle(len(m.sessionSentences), func(i, j int) {
-					m.sessionSentences[i], m.sessionSentences[j] = m.sessionSentences[j], m.sessionSentences[i]
+			if len(orderedSelectedScenarios) == 0 {
+				return m, nil // Do nothing if no scenarios are selected
+			}
+
+			// Group all sentences by scenario for efficient lookup
+			sentencesByScenario := make(map[string][]Sentence)
+			for _, s := range m.allSentences {
+				sentencesByScenario[s.Scenario] = append(sentencesByScenario[s.Scenario], s)
+			}
+
+			// Build the session list sequentially
+			m.sessionSentences = []Sentence{}
+			for _, scenarioName := range orderedSelectedScenarios {
+				scenarioSentences := sentencesByScenario[scenarioName]
+				if len(scenarioSentences) == 0 {
+					continue
+				}
+
+				// Shuffle the sentences *within* the current scenario
+				rand.Shuffle(len(scenarioSentences), func(i, j int) {
+					scenarioSentences[i], scenarioSentences[j] = scenarioSentences[j], scenarioSentences[i]
 				})
+
+				// Determine how many sentences to take
+				numToTake := m.sentencesPerScenario
+				if numToTake > len(scenarioSentences) {
+					numToTake = len(scenarioSentences)
+				}
+
+				// Add the selected sentences to the session queue
+				m.sessionSentences = append(m.sessionSentences, scenarioSentences[:numToTake]...)
+			}
+
+			if len(m.sessionSentences) > 0 {
 				m.state = statePlaying
 				m.sentenceIdx = 0
 				m.wordIdx = 0
@@ -389,16 +500,16 @@ func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wordStartTime = time.Now()
 				m.textInput.Focus() // Switch focus to game input
 				m.textInput.SetValue("")
+				return m, textinput.Blink
 			}
-			return m, nil
+
+			return m, nil // Stay on screen if no sentences ended up being queued
 		}
 	}
 
-	// Pass all other messages to the filter text input.
 	oldFilter := m.filterInput.Value()
 	m.filterInput, cmd = m.filterInput.Update(msg)
 
-	// If the filter text changed, re-apply the filter.
 	if m.filterInput.Value() != oldFilter {
 		m.applyFilter()
 	}
@@ -414,10 +525,9 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 
-		// MODIFIED: Esc returns to menu and triggers a stat reload.
 		case tea.KeyEsc:
 			m.state = stateScenarioSelection
-			m.filterInput.Focus() // Give focus back to the filter input
+			m.filterInput.Focus()
 			return m, reloadStatsCmd(m.db)
 
 		case tea.KeyEnter:
@@ -471,11 +581,16 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// MODIFIED: The main View function now routes to a view for the new state.
 func (m model) View() string {
-	if m.err != nil {
+	if m.err != nil && m.state != stateSentenceCountInput {
+		// Only show the generic error for non-setup states
+		// The setup view handles its own error display
 		return styleError.Render("Error: " + m.err.Error())
 	}
 	switch m.state {
+	case stateSentenceCountInput:
+		return m.viewSentenceCountInput()
 	case stateScenarioSelection:
 		return m.viewScenarioSelection()
 	case stateRoundOver:
@@ -490,6 +605,25 @@ func (m model) View() string {
 	}
 }
 
+// ADDED: This new function renders the initial sentence count input screen.
+func (m *model) viewSentenceCountInput() string {
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("finyap-go: Setup"))
+	b.WriteString("\n\n")
+
+	// Display error if one exists from invalid input
+	if m.err != nil {
+		b.WriteString(styleError.Render(m.err.Error()))
+		b.WriteString("\n\n")
+	}
+
+	b.WriteString(m.sentenceCountInput.View())
+	b.WriteString("\n\n")
+	b.WriteString(styleSubtle.Render("Enter the number of sentences to practice from each selected scenario.\nPress Enter to continue, or Esc to quit."))
+
+	return b.String()
+}
+
 func (m *model) viewScenarioSelection() string {
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("finyap-go: Scenario Selection"))
@@ -497,7 +631,6 @@ func (m *model) viewScenarioSelection() string {
 	b.WriteString(m.filterInput.View())
 	b.WriteString("\n\n")
 
-	// Calculate viewport boundaries
 	start := m.viewportStart
 	end := m.viewportStart + m.viewportHeight
 	if end > len(m.filteredStats) {
@@ -507,8 +640,7 @@ func (m *model) viewScenarioSelection() string {
 	if len(m.filteredStats) == 0 {
 		b.WriteString("No scenarios match your filter.\n")
 	} else {
-		// Render only the visible part of the list
-		format := fmt.Sprintf("%%s %%s %%-%ds | Plays: %%-5d | %%s %%.0f%%%%", m.maxScenarioNameWidth) // <- REMOVED TRAILING \n
+		format := fmt.Sprintf("%%s %%s %%-%ds | Plays: %%-5d | %%s %%.0f%%%%", m.maxScenarioNameWidth)
 		for i := start; i < end; i++ {
 			stat := m.filteredStats[i]
 			cursor := " "
@@ -525,17 +657,16 @@ func (m *model) viewScenarioSelection() string {
 			if stat.TotalPlays > 0 {
 				percentage = float64(stat.CorrectPlays) / float64(stat.TotalPlays) * 100
 			}
-			bar := renderBar(percentage/100, 40) // renderBar expects 0.0-1.0
+			bar := renderBar(percentage/100, 40)
 
 			line := fmt.Sprintf(format, cursor, checked, stat.Name, stat.TotalPlays, bar, percentage)
 
-			// Highlight the entire line if it's the current cursor position
 			if m.cursor == i {
 				b.WriteString(styleHighlight.Render(line))
 			} else {
 				b.WriteString(line)
 			}
-			b.WriteString("\n") // <- ADDED NEWLINE HERE, OUTSIDE THE RENDER
+			b.WriteString("\n")
 		}
 	}
 
@@ -554,7 +685,7 @@ func renderBar(percentage float64, width int) string {
 
 func (m model) viewPlaying() string {
 	var b strings.Builder
-	const indent = "  "
+	const indent = "  "
 	b.WriteString(styleHeader.Render("finyap-go"))
 	b.WriteRune('\n')
 	currentSentence := m.sessionSentences[m.sentenceIdx]
@@ -567,12 +698,15 @@ func (m model) viewPlaying() string {
 	var displayedWords []string
 	for i, word := range currentSentence.Words {
 		if i < m.wordIdx {
+			// Correctly guessed words are fully revealed and styled. No change here.
 			displayedWords = append(displayedWords, styleCorrect.Render(applyCliticStyling(word)))
 		} else if i == m.wordIdx {
-			styledWord := applyCliticStyling(cipherWord(word))
+			// MODIFIED: Use the new function for the currently active word.
+			styledWord := cipherWordWithClitics(word)
 			displayedWords = append(displayedWords, styleHighlight.Render(styledWord))
 		} else {
-			displayedWords = append(displayedWords, applyCliticStyling(cipherWord(word)))
+			// MODIFIED: Use the new function for upcoming words.
+			displayedWords = append(displayedWords, cipherWordWithClitics(word))
 		}
 	}
 	b.WriteString(indent)
@@ -630,7 +764,6 @@ func renderLiveFeedback(input, target string) string {
 		return ""
 	}
 
-	// Convert strings to rune slices to handle multi-byte characters correctly
 	inputRunes := []rune(input)
 	targetRunes := []rune(target)
 
@@ -638,16 +771,13 @@ func renderLiveFeedback(input, target string) string {
 
 	for i, r := range inputRunes {
 		if i >= len(targetRunes) {
-			// Character is past the end of the target word
 			coloredChars = append(coloredChars, styleIncorrect.Render(string(r)))
 			continue
 		}
 
 		if r == targetRunes[i] {
-			// The rune at this position matches
 			coloredChars = append(coloredChars, styleCorrect.Render(string(r)))
 		} else {
-			// Mismatch
 			coloredChars = append(coloredChars, styleIncorrect.Render(string(r)))
 		}
 	}
@@ -885,8 +1015,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Initialize the program, ensuring the stats are sorted by play count before being passed to the model.
-	// This removes the intermediate `sortedStats` variable to prevent potential mix-ups.
 	p := tea.NewProgram(newModel(db, sentences, sortStats(stats)))
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Error running program: %v", err)
