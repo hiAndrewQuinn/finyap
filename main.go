@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -31,16 +30,15 @@ var CLITICS = []string{"kaan", "kään", "kin", "han", "hän", "ko", "kö", "pa"
 // --- STYLING (using Lipgloss) ---
 
 var (
-	styleCorrect      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true) // Green
-	styleIncorrect    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)  // Red
-	stylePartial      = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // Yellow
-	styleHighlight    = lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("0")) // Green background
-	styleClitic       = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // Pink/Magenta
-	styleSubtle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleHeader       = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	styleError        = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(1)
-	wordSeparator     = " "
-	nonAlphanumericRE = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+	styleCorrect   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)                      // Green
+	styleIncorrect = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)                       // Red
+	stylePartial   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)                      // Yellow
+	styleHighlight = lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("0")) // Green background
+	styleClitic    = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))                                 // Pink/Magenta
+	styleSubtle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styleHeader    = lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	styleError     = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(1)
+	wordSeparator  = " "
 )
 
 // --- DATA STRUCTURES ---
@@ -72,7 +70,6 @@ type model struct {
 	state       gameState
 	roundResult struct {
 		isCorrect bool
-		duration  time.Duration
 	}
 
 	// Game progression
@@ -91,17 +88,23 @@ func cleanWord(s string) string {
 
 // cipherWord applies the vowel/consonant mask to a word.
 func cipherWord(s string) string {
-	// Using a replacer is more efficient than chained regex or Replace calls.
-	r := strings.NewReplacer(
-		"a", "U", "o", "U", "u", "U",
-		"A", "U", "O", "U", "U", "U",
-		"e", "E", "i", "E",
-		"E", "E", "I", "E",
-		"ä", "Ä", "ö", "Ä", "y", "Ä",
-		"Ä", "Ä", "Ö", "Ä", "Y", "Ä",
-	)
-	s = r.Replace(s)
-	return nonAlphanumericRE.ReplaceAllString(s, "x")
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case strings.ContainsRune("aouAOU", r):
+			b.WriteRune('U')
+		case strings.ContainsRune("eiEI", r):
+			b.WriteRune('E')
+		case strings.ContainsRune("äöyÄÖY", r):
+			b.WriteRune('Ä')
+		case strings.ContainsRune("bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ", r):
+			b.WriteRune('x')
+		default:
+			// Pass through punctuation and other characters.
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // applyCliticStyling finds and styles known clitics in a word.
@@ -137,6 +140,7 @@ func newModel(db *sql.DB, sentences []Sentence) model {
 	ti.Focus()
 	ti.CharLimit = 50
 	ti.Width = 50
+	ti.Prompt = "" // We render the prompt manually for alignment.
 
 	return model{
 		db:          db,
@@ -177,7 +181,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			userInput := cleanWord(m.textInput.Value())
 
 			m.roundResult.isCorrect = (userInput == targetWord)
-			
+
 			// Log the attempt to the database
 			logPlay(m.db, currentSentence.ID, m.roundResult.isCorrect)
 
@@ -220,8 +224,10 @@ func (m model) View() string {
 }
 
 // viewPlaying renders the main game screen.
+// viewPlaying renders the main game screen.
 func (m model) viewPlaying() string {
 	var b strings.Builder
+	const indent = "  " // Define the consistent indent
 
 	b.WriteString(styleHeader.Render("finyap-go"))
 	b.WriteRune('\n')
@@ -250,15 +256,37 @@ func (m model) viewPlaying() string {
 			displayedWords = append(displayedWords, applyCliticStyling(cipherWord(word)))
 		}
 	}
+	b.WriteString(indent) // Apply indent
 	b.WriteString(strings.Join(displayedWords, wordSeparator))
 	b.WriteRune('\n')
 	b.WriteRune('\n')
 
-	// Render the user's input with live feedback
+	// --- DYNAMIC ALIGNMENT LOGIC ---
+	// Calculate the visual width of the sentence part before the current word.
+	var promptPadding string
+	if m.wordIdx > 0 {
+		prefixSlice := displayedWords[:m.wordIdx]
+		prefixString := strings.Join(prefixSlice, wordSeparator)
+		prefixWidth := lipgloss.Width(prefixString) + lipgloss.Width(wordSeparator)
+		promptPadding = strings.Repeat(" ", prefixWidth)
+	}
+
+	// Render the prompt and the text input view manually.
+	b.WriteString(indent) // Apply indent
+	b.WriteString(promptPadding)
+	b.WriteString("")
 	b.WriteString(m.textInput.View())
 	b.WriteRune('\n')
-	b.WriteString(renderLiveFeedback(m.textInput.Value(), currentSentence.CleanWords[m.wordIdx]))
-	b.WriteRune('\n')
+
+	// Render the live feedback line, also padded for alignment.
+	feedbackLine := renderLiveFeedback(m.textInput.Value(), currentSentence.CleanWords[m.wordIdx])
+	if feedbackLine != "" {
+		b.WriteString(indent) // Apply indent
+		b.WriteString(promptPadding)
+		b.WriteString(feedbackLine)
+		b.WriteRune('\n')
+	}
+
 	b.WriteRune('\n')
 	b.WriteString(styleSubtle.Render("Press Esc or Ctrl+C to quit."))
 
@@ -292,8 +320,11 @@ func (m model) viewRoundOver() string {
 // renderLiveFeedback gives the user a colored string showing their typing accuracy in real-time.
 func renderLiveFeedback(input, target string) string {
 	input = cleanWord(input)
-	var coloredChars []string
+	if input == "" {
+		return ""
+	}
 
+	var coloredChars []string
 	for i, r := range input {
 		if i >= len(target) {
 			coloredChars = append(coloredChars, styleIncorrect.Render(string(r)))
@@ -306,10 +337,7 @@ func renderLiveFeedback(input, target string) string {
 		}
 	}
 
-	if len(coloredChars) > 0 {
-		return "Feedback: " + strings.Join(coloredChars, "")
-	}
-	return ""
+	return "Feedback: " + strings.Join(coloredChars, "")
 }
 
 // --- DATABASE FUNCTIONS ---
@@ -427,7 +455,7 @@ func loadSentencesFromTSV() ([]Sentence, error) {
 				if len(words) == 0 {
 					continue // Skip empty sentences
 				}
-				
+
 				cleanWords := make([]string, len(words))
 				for i, w := range words {
 					cleanWords[i] = cleanWord(w)
@@ -444,7 +472,6 @@ func loadSentencesFromTSV() ([]Sentence, error) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
