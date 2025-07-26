@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv" // ADDED: For parsing sentence count
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -48,6 +48,7 @@ var (
 	styleBarGreen       = lipgloss.NewStyle().Background(lipgloss.Color("10")).SetString(" ")
 	styleBarRed         = lipgloss.NewStyle().Background(lipgloss.Color("9")).SetString(" ")
 	wordSeparator       = " "
+	styleRecoveryNotice = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Italic(true) // For recovery round notice
 )
 
 // --- DATA STRUCTURES ---
@@ -68,11 +69,10 @@ type ScenarioStat struct {
 	SentencesInDB int
 }
 
-// MODIFIED: Added a new initial state for configuration.
 type gameState int
 
 const (
-	stateSentenceCountInput gameState = iota // New: Ask for sentence count first
+	stateSentenceCountInput gameState = iota
 	stateScenarioSelection
 	statePlaying
 	stateRoundOver
@@ -97,12 +97,12 @@ type statsReloadedMsg struct {
 	err   error
 }
 
-// MODIFIED: model struct now includes state for the new input screen.
+// MODIFIED: Added fields for recovery round logic.
 type model struct {
 	db                   *sql.DB
-	textInput            textinput.Model // This is for the game state
-	filterInput          textinput.Model // For the scenario filter
-	sentenceCountInput   textinput.Model // New: For sentence count per scenario
+	textInput            textinput.Model
+	filterInput          textinput.Model
+	sentenceCountInput   textinput.Model
 	err                  error
 	state                gameState
 	allSentences         []Sentence
@@ -112,14 +112,16 @@ type model struct {
 	wordIdx              int
 	wordStartTime        time.Time
 	roundAnalytics       []wordAttemptData
-	scenarioStats        []ScenarioStat // All stats, sorted once
-	filteredStats        []ScenarioStat // The stats currently visible after filtering
+	scenarioStats        []ScenarioStat
+	filteredStats        []ScenarioStat
 	selectedScenarios    map[string]bool
 	cursor               int
 	maxScenarioNameWidth int
 	viewportStart        int
 	viewportHeight       int
-	sentencesPerScenario int // New: Stores the number of sentences to play per scenario
+	sentencesPerScenario int
+	isRecoveryRound      bool           // ADDED: Flag for recovery rounds.
+	failedSentenceIDs    map[int64]bool // ADDED: Tracks failures within a round.
 }
 
 // --- CORE LOGIC & HELPERS ---
@@ -149,12 +151,9 @@ func cipherWord(s string) string {
 	return b.String()
 }
 
-// MODIFIED: Ciphers a word and styles the ciphered portion corresponding to a clitic.
 func cipherWordWithClitics(word string) string {
 	var foundClitics []string
 	stem := word
-
-	// First, peel off any clitics from the end of the real word, right-to-left.
 	for {
 		found := false
 		for _, clitic := range CLITICS {
@@ -170,18 +169,12 @@ func cipherWordWithClitics(word string) string {
 			break
 		}
 	}
-
-	// Cipher the remaining stem of the word.
 	cipheredStem := cipherWord(stem)
-
-	// Cipher and then style the clitics that were found.
 	var styledClitics []string
 	for _, clitic := range foundClitics {
 		cipheredClitic := cipherWord(clitic)
 		styledClitics = append(styledClitics, styleClitic.Render(cipheredClitic))
 	}
-
-	// Combine the ciphered stem with the ciphered, styled clitics.
 	return cipheredStem + strings.Join(styledClitics, "")
 }
 
@@ -243,7 +236,6 @@ func (m *model) applyFilter() {
 			m.filteredStats = append(m.filteredStats, stat)
 		}
 	}
-	// Reset cursor and viewport after filtering
 	if m.cursor >= len(m.filteredStats) {
 		m.cursor = 0
 	}
@@ -266,11 +258,9 @@ func (m *model) updateViewport() {
 		m.viewportStart = 0
 		return
 	}
-
 	if m.cursor < m.viewportStart {
 		m.viewportStart = m.cursor
 	}
-
 	if m.cursor >= m.viewportStart+m.viewportHeight {
 		m.viewportStart = m.cursor - m.viewportHeight + 1
 	}
@@ -278,27 +268,24 @@ func (m *model) updateViewport() {
 
 // --- BUBBLETEA IMPLEMENTATION ---
 
-// MODIFIED: newModel now initializes the sentence count input and starts in that state.
+// MODIFIED: Initialized new fields.
 func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
-	// Game input
 	ti := textinput.New()
 	ti.Placeholder = "Type the word and press Enter..."
 	ti.CharLimit = 50
 	ti.Width = 50
 	ti.Prompt = ""
 
-	// Filter input for scenario selection
 	filterInput := textinput.New()
 	filterInput.Placeholder = "Filter scenarios by name..."
 	filterInput.CharLimit = 50
 	filterInput.Width = 50
 	filterInput.Prompt = "> "
 
-	// New: Sentence count input
 	sentenceCountInput := textinput.New()
 	sentenceCountInput.Placeholder = "10"
 	sentenceCountInput.Prompt = "How many sentences per scenario? (default 10): "
-	sentenceCountInput.Focus() // Start with this input focused
+	sentenceCountInput.Focus()
 	sentenceCountInput.CharLimit = 3
 	sentenceCountInput.Width = 10
 	sentenceCountInput.SetValue("10")
@@ -310,22 +297,22 @@ func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
 		}
 	}
 
-	cursor := 0
-
 	m := model{
 		db:                   db,
 		allSentences:         sentences,
 		textInput:            ti,
 		filterInput:          filterInput,
-		sentenceCountInput:   sentenceCountInput,      // Add new field
-		state:                stateSentenceCountInput, // Set initial state
+		sentenceCountInput:   sentenceCountInput,
+		state:                stateSentenceCountInput,
 		scenarioStats:        stats,
 		filteredStats:        stats,
 		selectedScenarios:    make(map[string]bool),
 		roundAnalytics:       make([]wordAttemptData, 0),
 		maxScenarioNameWidth: maxWidth,
-		cursor:               cursor,
+		cursor:               0,
 		viewportHeight:       15,
+		isRecoveryRound:      false,                // ADDED: Initialize to false
+		failedSentenceIDs:    make(map[int64]bool), // ADDED: Initialize empty map
 	}
 
 	m.updateViewport()
@@ -336,7 +323,6 @@ func (m model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
-// MODIFIED: The main Update function now routes to a handler for the new state.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.state {
 	case stateSentenceCountInput:
@@ -350,44 +336,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// ADDED: This new function handles all logic for the initial sentence count input screen.
 func (m *model) updateSentenceCountInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
-
 		case tea.KeyEnter:
 			val := m.sentenceCountInput.Value()
 			if val == "" {
-				val = "10" // Use default if empty
+				val = "10"
 			}
-
 			n, err := strconv.Atoi(val)
 			if err != nil || n <= 0 {
 				m.err = fmt.Errorf("invalid input: '%s'. Please enter a positive number", val)
-				return m, nil // Return without changing state, error will be displayed
+				return m, nil
 			}
-
 			m.sentencesPerScenario = n
-			m.err = nil // Clear any previous error
+			m.err = nil
 			m.state = stateScenarioSelection
-			m.filterInput.Focus() // Now focus the scenario filter input
+			m.filterInput.Focus()
 			return m, textinput.Blink
 		}
 	}
-
 	m.sentenceCountInput, cmd = m.sentenceCountInput.Update(msg)
 	return m, cmd
 }
 
-// MODIFIED: The Enter key logic is rewritten to create sequential, scenario-based sessions.
 func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-
 	switch msg := msg.(type) {
 	case statsReloadedMsg:
 		if msg.err != nil {
@@ -397,36 +375,30 @@ func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scenarioStats = msg.stats
 		m.applyFilter()
 		return m, nil
-
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
-
 		case tea.KeyUp:
 			if m.cursor > 0 {
 				m.cursor--
 				m.updateViewport()
 			}
 			return m, nil
-
 		case tea.KeyDown:
 			if m.cursor < len(m.filteredStats)-1 {
 				m.cursor++
 				m.updateViewport()
 			}
 			return m, nil
-
 		case tea.KeyCtrlA:
 			for _, stat := range m.filteredStats {
 				m.selectedScenarios[stat.Name] = true
 			}
 			return m, nil
-
 		case tea.KeyCtrlD:
 			m.selectedScenarios = make(map[string]bool)
 			return m, nil
-
 		case tea.KeyTab:
 			if len(m.filteredStats) > 0 {
 				scenarioName := m.filteredStats[m.cursor].Name
@@ -437,7 +409,6 @@ func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
-
 		case tea.KeyShiftTab:
 			if len(m.filteredStats) > 0 {
 				scenarioName := m.filteredStats[m.cursor].Name
@@ -448,75 +419,57 @@ func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
-
-		// --- THIS ENTIRE CASE IS REWRITTEN ---
 		case tea.KeyEnter:
-			// Get selected scenarios in the order they are displayed in the full list
 			var orderedSelectedScenarios []string
 			for _, stat := range m.scenarioStats {
 				if m.selectedScenarios[stat.Name] {
 					orderedSelectedScenarios = append(orderedSelectedScenarios, stat.Name)
 				}
 			}
-
 			if len(orderedSelectedScenarios) == 0 {
-				return m, nil // Do nothing if no scenarios are selected
+				return m, nil
 			}
-
-			// Group all sentences by scenario for efficient lookup
 			sentencesByScenario := make(map[string][]Sentence)
 			for _, s := range m.allSentences {
 				sentencesByScenario[s.Scenario] = append(sentencesByScenario[s.Scenario], s)
 			}
-
-			// Build the session list sequentially
 			m.sessionSentences = []Sentence{}
 			for _, scenarioName := range orderedSelectedScenarios {
 				scenarioSentences := sentencesByScenario[scenarioName]
 				if len(scenarioSentences) == 0 {
 					continue
 				}
-
-				// Shuffle the sentences *within* the current scenario
 				rand.Shuffle(len(scenarioSentences), func(i, j int) {
 					scenarioSentences[i], scenarioSentences[j] = scenarioSentences[j], scenarioSentences[i]
 				})
-
-				// Determine how many sentences to take
 				numToTake := m.sentencesPerScenario
 				if numToTake > len(scenarioSentences) {
 					numToTake = len(scenarioSentences)
 				}
-
-				// Add the selected sentences to the session queue
 				m.sessionSentences = append(m.sessionSentences, scenarioSentences[:numToTake]...)
 			}
-
 			if len(m.sessionSentences) > 0 {
 				m.state = statePlaying
 				m.sentenceIdx = 0
 				m.wordIdx = 0
 				m.roundAnalytics = make([]wordAttemptData, 0)
 				m.wordStartTime = time.Now()
-				m.textInput.Focus() // Switch focus to game input
+				m.textInput.Focus()
 				m.textInput.SetValue("")
 				return m, textinput.Blink
 			}
-
-			return m, nil // Stay on screen if no sentences ended up being queued
+			return m, nil
 		}
 	}
-
 	oldFilter := m.filterInput.Value()
 	m.filterInput, cmd = m.filterInput.Update(msg)
-
 	if m.filterInput.Value() != oldFilter {
 		m.applyFilter()
 	}
-
 	return m, cmd
 }
 
+// MODIFIED: This function contains the new round-transition and exit logic.
 func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
@@ -524,23 +477,72 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
-
 		case tea.KeyEsc:
+			m.isRecoveryRound = false
+			m.failedSentenceIDs = make(map[int64]bool)
 			m.state = stateScenarioSelection
 			m.filterInput.Focus()
 			return m, reloadStatsCmd(m.db)
 
 		case tea.KeyEnter:
+			// --- THIS IS THE PRIMARY LOGIC CHANGE ---
+
+			// This branch handles advancing after a sentence is over.
 			if m.state == stateRoundOver {
+				// Record if the completed sentence was a failure.
+				if !m.roundResult.isCorrect {
+					currentSentenceID := m.sessionSentences[m.sentenceIdx].ID
+					m.failedSentenceIDs[currentSentenceID] = true
+				}
+
+				// Move to the next sentence index.
+				m.sentenceIdx++
+
+				// Check if the current round of sentences is complete.
+				if m.sentenceIdx >= len(m.sessionSentences) {
+					// Round is over. Let's see if there were any failures.
+					if len(m.failedSentenceIDs) == 0 {
+						// No failures! We are done. Exit the program.
+						return m, tea.Quit
+					}
+
+					// There were failures. Prepare the next recovery round.
+					var nextRoundSentences []Sentence
+					// Create a map for quick lookups to preserve order.
+					allSentencesMap := make(map[int64]Sentence)
+					for _, s := range m.allSentences {
+						allSentencesMap[s.ID] = s
+					}
+
+					// Collect the full sentence objects for the ones we failed.
+					for id := range m.failedSentenceIDs {
+						if sentence, ok := allSentencesMap[id]; ok {
+							nextRoundSentences = append(nextRoundSentences, sentence)
+						}
+					}
+
+					// Shuffle the failed sentences for the recovery round.
+					rand.Shuffle(len(nextRoundSentences), func(i, j int) {
+						nextRoundSentences[i], nextRoundSentences[j] = nextRoundSentences[j], nextRoundSentences[i]
+					})
+
+					// Set up the model for the new recovery round.
+					m.sessionSentences = nextRoundSentences
+					m.isRecoveryRound = true
+					m.failedSentenceIDs = make(map[int64]bool) // Reset failure tracking for the new round.
+					m.sentenceIdx = 0
+				}
+
+				// Whether starting a new round or continuing the current one, reset for the next sentence.
 				m.state = statePlaying
 				m.wordIdx = 0
-				m.sentenceIdx = (m.sentenceIdx + 1) % len(m.sessionSentences)
 				m.textInput.SetValue("")
 				m.roundAnalytics = make([]wordAttemptData, 0)
 				m.wordStartTime = time.Now()
 				return m, nil
 			}
 
+			// This branch handles a word submission during gameplay.
 			currentSentence := m.sessionSentences[m.sentenceIdx]
 			targetWord := currentSentence.CleanWords[m.wordIdx]
 			userInput := cleanWord(m.textInput.Value())
@@ -554,9 +556,16 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Duration:  duration,
 			}
 			m.roundAnalytics = append(m.roundAnalytics, attempt)
-			m.roundResult.isCorrect = isCorrect
 
-			logPlay(m.db, currentSentence.ID, isCorrect)
+			// The round's result is true only if every word is correct.
+			// isCorrect here is for the single word, m.roundResult.isCorrect is for the whole sentence.
+			isSentenceComplete := (m.wordIdx+1 >= len(currentSentence.Words))
+			m.roundResult.isCorrect = isCorrect && isSentenceComplete
+
+			// Only log to DB if it's NOT a recovery round.
+			if !m.isRecoveryRound {
+				logPlay(m.db, currentSentence.ID, isCorrect)
+			}
 
 			if isCorrect {
 				m.wordIdx++
@@ -564,11 +573,17 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wordStartTime = time.Now()
 				if m.wordIdx >= len(currentSentence.Words) {
 					m.state = stateRoundOver
-					logSentenceResult(m.db, currentSentence.ID, true, m.roundAnalytics)
+					// Only log full sentence result if NOT a recovery round.
+					if !m.isRecoveryRound {
+						logSentenceResult(m.db, currentSentence.ID, true, m.roundAnalytics)
+					}
 				}
 			} else {
 				m.state = stateRoundOver
-				logSentenceResult(m.db, currentSentence.ID, false, m.roundAnalytics)
+				// Only log full sentence result if NOT a recovery round.
+				if !m.isRecoveryRound {
+					logSentenceResult(m.db, currentSentence.ID, false, m.roundAnalytics)
+				}
 			}
 			return m, nil
 		}
@@ -581,11 +596,8 @@ func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// MODIFIED: The main View function now routes to a view for the new state.
 func (m model) View() string {
 	if m.err != nil && m.state != stateSentenceCountInput {
-		// Only show the generic error for non-setup states
-		// The setup view handles its own error display
 		return styleError.Render("Error: " + m.err.Error())
 	}
 	switch m.state {
@@ -605,22 +617,17 @@ func (m model) View() string {
 	}
 }
 
-// ADDED: This new function renders the initial sentence count input screen.
 func (m *model) viewSentenceCountInput() string {
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("finyap-go: Setup"))
 	b.WriteString("\n\n")
-
-	// Display error if one exists from invalid input
 	if m.err != nil {
 		b.WriteString(styleError.Render(m.err.Error()))
 		b.WriteString("\n\n")
 	}
-
 	b.WriteString(m.sentenceCountInput.View())
 	b.WriteString("\n\n")
 	b.WriteString(styleSubtle.Render("Enter the number of sentences to practice from each selected scenario.\nPress Enter to continue, or Esc to quit."))
-
 	return b.String()
 }
 
@@ -630,13 +637,11 @@ func (m *model) viewScenarioSelection() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.filterInput.View())
 	b.WriteString("\n\n")
-
 	start := m.viewportStart
 	end := m.viewportStart + m.viewportHeight
 	if end > len(m.filteredStats) {
 		end = len(m.filteredStats)
 	}
-
 	if len(m.filteredStats) == 0 {
 		b.WriteString("No scenarios match your filter.\n")
 	} else {
@@ -647,20 +652,16 @@ func (m *model) viewScenarioSelection() string {
 			if m.cursor == i {
 				cursor = styleCursor.Render(">")
 			}
-
 			checked := "[ ]"
 			if m.selectedScenarios[stat.Name] {
 				checked = styleCorrect.Render("[x]")
 			}
-
 			var percentage float64
 			if stat.TotalPlays > 0 {
 				percentage = float64(stat.CorrectPlays) / float64(stat.TotalPlays) * 100
 			}
 			bar := renderBar(percentage/100, 40)
-
 			line := fmt.Sprintf(format, cursor, checked, stat.Name, stat.TotalPlays, bar, percentage)
-
 			if m.cursor == i {
 				b.WriteString(styleHighlight.Render(line))
 			} else {
@@ -669,7 +670,6 @@ func (m *model) viewScenarioSelection() string {
 			b.WriteString("\n")
 		}
 	}
-
 	b.WriteString(fmt.Sprintf("\n  %s", styleSubtle.Render(fmt.Sprintf("Showing %d of %d scenarios", len(m.filteredStats), len(m.scenarioStats)))))
 	b.WriteString(styleSubtle.Render("\n\n ↑/↓: Navigate | tab: Toggle | enter: Start"))
 	b.WriteString(styleSubtle.Render("\n ctrl+a: Select All (Filtered) | ctrl+d: Deselect All | esc: Quit"))
@@ -683,11 +683,20 @@ func renderBar(percentage float64, width int) string {
 		strings.Repeat(styleBarRed.String(), redCount)
 }
 
+// MODIFIED: Added a notice for recovery rounds.
 func (m model) viewPlaying() string {
 	var b strings.Builder
-	const indent = "  "
+	const indent = "  "
 	b.WriteString(styleHeader.Render("finyap-go"))
 	b.WriteRune('\n')
+
+	// ADDED: Display a notice if this is a recovery round.
+	if m.isRecoveryRound {
+		recoveryMsg := fmt.Sprintf("Recovery Round (%d sentences remaining)", len(m.sessionSentences)-m.sentenceIdx)
+		b.WriteString(styleRecoveryNotice.Render(recoveryMsg))
+		b.WriteRune('\n')
+	}
+
 	currentSentence := m.sessionSentences[m.sentenceIdx]
 	b.WriteString(fmt.Sprintf("Scenario: %s [%d/%d]",
 		styleScenarioYellow.Render(currentSentence.Scenario), m.sentenceIdx+1, len(m.sessionSentences)))
@@ -698,14 +707,11 @@ func (m model) viewPlaying() string {
 	var displayedWords []string
 	for i, word := range currentSentence.Words {
 		if i < m.wordIdx {
-			// Correctly guessed words are fully revealed and styled. No change here.
 			displayedWords = append(displayedWords, styleCorrect.Render(applyCliticStyling(word)))
 		} else if i == m.wordIdx {
-			// MODIFIED: Use the new function for the currently active word.
 			styledWord := cipherWordWithClitics(word)
 			displayedWords = append(displayedWords, styleHighlight.Render(styledWord))
 		} else {
-			// MODIFIED: Use the new function for upcoming words.
 			displayedWords = append(displayedWords, cipherWordWithClitics(word))
 		}
 	}
@@ -732,13 +738,27 @@ func (m model) viewPlaying() string {
 		b.WriteRune('\n')
 	}
 	b.WriteRune('\n')
+
+	// ADDED: Display the recovery round explanation in the footer as well.
+	if m.isRecoveryRound {
+		b.WriteString(styleRecoveryNotice.Render("This is a recovery play for practice. It will not be recorded in your history.\n"))
+	}
 	b.WriteString(styleSubtle.Render("Press Esc or Ctrl+C to quit."))
 	return b.String()
 }
 
 func (m model) viewRoundOver() string {
 	var b strings.Builder
-	currentSentence := m.sessionSentences[m.sentenceIdx]
+
+	// ADDED: A boundary check to prevent the panic.
+	// This ensures we always access a valid index, especially after the last
+	// sentence in a round has been completed and sentenceIdx was incremented.
+	completedSentenceIdx := m.sentenceIdx
+	if completedSentenceIdx >= len(m.sessionSentences) {
+		completedSentenceIdx = len(m.sessionSentences) - 1
+	}
+	currentSentence := m.sessionSentences[completedSentenceIdx]
+
 	b.WriteString(styleHeader.Render("Round Over"))
 	b.WriteRune('\n')
 	if m.roundResult.isCorrect {
@@ -748,13 +768,24 @@ func (m model) viewRoundOver() string {
 		targetWord := currentSentence.Words[m.wordIdx]
 		styledInput, styledTarget := diffStrings(userInput, targetWord)
 		b.WriteString(styleIncorrect.Render("❌ Not quite."))
-		b.WriteString(fmt.Sprintf("\nYour input:   %s", styledInput))
-		b.WriteString(fmt.Sprintf("\nCorrect word: %s", styledTarget))
+		b.WriteString(fmt.Sprintf("\nYour input:    %s", styledInput))
+		b.WriteString(fmt.Sprintf("\nCorrect word:  %s", styledTarget))
 	}
 	b.WriteString("\n\nFull sentence:\n")
 	b.WriteString(fmt.Sprintf("FI: %s\n", styleCorrect.Render(currentSentence.Finnish)))
 	b.WriteString(fmt.Sprintf("EN: %s\n", currentSentence.English))
-	b.WriteString(styleSubtle.Render("\nPress Enter to continue to the next sentence..."))
+
+	// MODIFIED: The message is now more dynamic.
+	if m.sentenceIdx+1 >= len(m.sessionSentences) {
+		if len(m.failedSentenceIDs) == 0 && !m.roundResult.isCorrect {
+			// This is the last sentence and it's a failure, so we know a recovery round is next.
+			b.WriteString(styleSubtle.Render("\nPress Enter to begin the recovery round..."))
+		} else {
+			b.WriteString(styleSubtle.Render("\nPress Enter to finish session..."))
+		}
+	} else {
+		b.WriteString(styleSubtle.Render("\nPress Enter to continue to the next sentence..."))
+	}
 	return b.String()
 }
 
@@ -763,18 +794,14 @@ func renderLiveFeedback(input, target string) string {
 	if input == "" {
 		return ""
 	}
-
 	inputRunes := []rune(input)
 	targetRunes := []rune(target)
-
 	var coloredChars []string
-
 	for i, r := range inputRunes {
 		if i >= len(targetRunes) {
 			coloredChars = append(coloredChars, styleIncorrect.Render(string(r)))
 			continue
 		}
-
 		if r == targetRunes[i] {
 			coloredChars = append(coloredChars, styleCorrect.Render(string(r)))
 		} else {
@@ -972,13 +999,11 @@ func sortStats(stats []ScenarioStat) []ScenarioStat {
 	for _, s := range stats {
 		groupedStats[s.TotalPlays] = append(groupedStats[s.TotalPlays], s)
 	}
-
 	var playCounts []int
 	for pc := range groupedStats {
 		playCounts = append(playCounts, pc)
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(playCounts)))
-
 	var sortedAndShuffledStats []ScenarioStat
 	for _, pc := range playCounts {
 		group := groupedStats[pc]
@@ -1004,17 +1029,14 @@ func main() {
 	if err := syncSentencesWithDB(db, &sentences); err != nil {
 		log.Fatalf("Failed to sync sentences with database: %v", err)
 	}
-
 	stats, err := getScenarioStats(db)
 	if err != nil {
 		log.Fatalf("Failed to get scenario stats: %v", err)
 	}
-
 	if len(sentences) == 0 && len(stats) == 0 {
 		fmt.Printf("No sentences found in '%s' directory. Exiting.\n", scenariosDir)
 		os.Exit(0)
 	}
-
 	p := tea.NewProgram(newModel(db, sentences, sortStats(stats)))
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Error running program: %v", err)
