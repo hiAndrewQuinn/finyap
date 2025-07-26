@@ -2,13 +2,14 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json" // NEW: Added for marshalling analytics data.
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -26,28 +27,30 @@ const (
 	dbPath       = "finyap.db"
 )
 
-// CLITICS are suffixes that attach to words. We identify and style them separately.
 var CLITICS = []string{"kaan", "kään", "kin", "han", "hän", "ko", "kö", "pa", "pä"}
 
 // --- STYLING (using Lipgloss) ---
 
 var (
-	styleCorrect     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)                      // Green
-	styleIncorrect   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)                       // Red
-	stylePartial     = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)                      // Yellow
-	styleHighlight   = lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("0")) // Green background
-	styleClitic      = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))                                 // Pink/Magenta
-	styleSubtle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleHeader      = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	styleError       = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(1)
-	styleInputDiff   = lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("0"))  // Red BG
-	styleCorrectDiff = lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")) // Green BG
-	wordSeparator    = " "
+	styleCorrect        = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true) // Green
+	styleIncorrect      = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)  // Red
+	stylePartial        = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // Yellow
+	styleHighlight      = lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("0"))
+	styleClitic         = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // Pink/Magenta
+	styleSubtle         = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styleHeader         = lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	styleError          = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(1)
+	styleInputDiff      = lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("0"))
+	styleCorrectDiff    = lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0"))
+	styleScenarioYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // Yellow for scenario name in-game
+	styleCursor         = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	styleBarGreen       = lipgloss.NewStyle().Background(lipgloss.Color("10")).SetString(" ")
+	styleBarRed         = lipgloss.NewStyle().Background(lipgloss.Color("9")).SetString(" ")
+	wordSeparator       = " "
 )
 
 // --- DATA STRUCTURES ---
 
-// Sentence holds all data for a single Finnish/English sentence pair.
 type Sentence struct {
 	ID         int64
 	Scenario   string
@@ -57,23 +60,28 @@ type Sentence struct {
 	CleanWords []string
 }
 
-// gameState represents the current state of the application UI.
+type ScenarioStat struct {
+	Name          string
+	TotalPlays    int
+	CorrectPlays  int
+	SentencesInDB int
+}
+
 type gameState int
 
 const (
-	statePlaying gameState = iota
+	stateScenarioSelection gameState = iota
+	statePlaying
 	stateRoundOver
 )
 
-// NEW: wordAttemptData holds analytics for a single word attempt within a round.
 type wordAttemptData struct {
 	WordIndex int
-	UserInput string // The raw user input for detailed error analysis.
+	UserInput string
 	IsCorrect bool
 	Duration  time.Duration
 }
 
-// NEW: WordAttemptDetail is the structure used for marshalling analytics data to JSON.
 type WordAttemptDetail struct {
 	WordIndex  int    `json:"wordIndex"`
 	UserInput  string `json:"userInput"`
@@ -81,36 +89,36 @@ type WordAttemptDetail struct {
 	DurationMs int64  `json:"durationMs"`
 }
 
-// model is the core of our Bubbletea application, holding all state.
 type model struct {
-	db          *sql.DB
-	sentences   []Sentence
-	textInput   textinput.Model
-	err         error
-	state       gameState
-	roundResult struct {
-		isCorrect bool
-	}
-
-	// Game progression
-	sentenceIdx int
-	wordIdx     int
-
-	// NEW: Analytics state for the current round.
-	wordStartTime  time.Time
-	roundAnalytics []wordAttemptData
+	db                   *sql.DB
+	textInput            textinput.Model // This is for the game state
+	filterInput          textinput.Model // New: for the scenario filter
+	err                  error
+	state                gameState
+	allSentences         []Sentence
+	sessionSentences     []Sentence
+	roundResult          struct{ isCorrect bool }
+	sentenceIdx          int
+	wordIdx              int
+	wordStartTime        time.Time
+	roundAnalytics       []wordAttemptData
+	scenarioStats        []ScenarioStat // All stats, sorted once
+	filteredStats        []ScenarioStat // The stats currently visible after filtering
+	selectedScenarios    map[string]bool
+	cursor               int
+	maxScenarioNameWidth int
+	viewportStart        int // New: for scrolling
+	viewportHeight       int // New: for scrolling
 }
 
 // --- CORE LOGIC & HELPERS ---
 
-// cleanWord converts a word to a lowercase, punctuation-free form for matching.
 func cleanWord(s string) string {
 	s = strings.ToLower(s)
 	s = strings.Trim(s, `.,!?;:"()[]{}„“`)
 	return s
 }
 
-// cipherWord applies the vowel/consonant mask to a word.
 func cipherWord(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -124,19 +132,15 @@ func cipherWord(s string) string {
 		case strings.ContainsRune("bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ", r):
 			b.WriteRune('x')
 		default:
-			// Pass through punctuation and other characters.
 			b.WriteRune(r)
 		}
 	}
 	return b.String()
 }
 
-// applyCliticStyling finds and styles known clitics in a word.
 func applyCliticStyling(word string) string {
 	var styledClitics []string
 	stem := word
-
-	// Iteratively strip clitics from the end of the word.
 	for {
 		found := false
 		for _, clitic := range CLITICS {
@@ -155,67 +159,115 @@ func applyCliticStyling(word string) string {
 	return stem + strings.Join(styledClitics, "")
 }
 
-// diffStrings creates two styled strings showing a character-by-character comparison.
 func diffStrings(input, target string) (string, string) {
 	var inputStyled, targetStyled strings.Builder
 	runesInput := []rune(input)
 	runesTarget := []rune(target)
-
 	maxLen := len(runesInput)
 	if len(runesTarget) > maxLen {
 		maxLen = len(runesTarget)
 	}
-
 	for i := 0; i < maxLen; i++ {
 		inputInBounds := i < len(runesInput)
 		targetInBounds := i < len(runesTarget)
-
 		if inputInBounds && targetInBounds {
-			inputRune := runesInput[i]
-			targetRune := runesTarget[i]
-
-			// Case-insensitive comparison
+			inputRune, targetRune := runesInput[i], runesTarget[i]
 			if unicode.ToLower(inputRune) == unicode.ToLower(targetRune) {
-				// Characters match (ignoring case), apply default styles.
 				inputStyled.WriteString(string(inputRune))
 				targetStyled.WriteString(string(targetRune))
 			} else {
-				// Characters are different, apply reverse video diff styles
 				inputStyled.WriteString(styleInputDiff.Render(string(inputRune)))
 				targetStyled.WriteString(styleCorrectDiff.Render(string(targetRune)))
 			}
 		} else if inputInBounds {
-			// Input is longer, this is a mistake
 			inputStyled.WriteString(styleInputDiff.Render(string(runesInput[i])))
 		} else if targetInBounds {
-			// Target is longer, this is a mistake
 			targetStyled.WriteString(styleCorrectDiff.Render(string(runesTarget[i])))
 		}
 	}
 	return inputStyled.String(), targetStyled.String()
 }
 
+func (m *model) applyFilter() {
+	filterText := strings.ToLower(m.filterInput.Value())
+	m.filteredStats = []ScenarioStat{}
+	for _, stat := range m.scenarioStats {
+		if strings.Contains(strings.ToLower(stat.Name), filterText) {
+			m.filteredStats = append(m.filteredStats, stat)
+		}
+	}
+	// Reset cursor and viewport after filtering
+	if m.cursor >= len(m.filteredStats) {
+		m.cursor = 0
+	}
+	m.updateViewport()
+}
+
+func (m *model) updateViewport() {
+	if len(m.filteredStats) == 0 {
+		m.viewportStart = 0
+		return
+	}
+
+	// If cursor is above the viewport, move viewport up
+	if m.cursor < m.viewportStart {
+		m.viewportStart = m.cursor
+	}
+
+	// If cursor is below the viewport, move viewport down
+	if m.cursor >= m.viewportStart+m.viewportHeight {
+		m.viewportStart = m.cursor - m.viewportHeight + 1
+	}
+}
+
 // --- BUBBLETEA IMPLEMENTATION ---
 
-// newModel initializes and returns the application's state model.
-func newModel(db *sql.DB, sentences []Sentence) model {
+func newModel(db *sql.DB, sentences []Sentence, stats []ScenarioStat) model {
+	// Game input
 	ti := textinput.New()
 	ti.Placeholder = "Type the word and press Enter..."
 	ti.Focus()
 	ti.CharLimit = 50
 	ti.Width = 50
-	ti.Prompt = "" // We render the prompt manually for alignment.
+	ti.Prompt = ""
 
-	return model{
-		db:             db,
-		sentences:      sentences,
-		textInput:      ti,
-		state:          statePlaying,
-		sentenceIdx:    0,
-		wordIdx:        0,
-		wordStartTime:  time.Now(),                 // NEW: Initialize timer for the very first word.
-		roundAnalytics: make([]wordAttemptData, 0), // NEW: Initialize analytics slice.
+	// Filter input for scenario selection
+	filterInput := textinput.New()
+	filterInput.Placeholder = "Filter scenarios by name..."
+	filterInput.Focus()
+	filterInput.CharLimit = 50
+	filterInput.Width = 50
+	filterInput.Prompt = "> "
+
+	maxWidth := 0
+	for _, s := range stats {
+		if len(s.Name) > maxWidth {
+			maxWidth = len(s.Name)
+		}
 	}
+
+	cursor := 0
+	if len(stats) > 0 {
+		cursor = len(stats) - 1 // Start at the bottom
+	}
+
+	m := model{
+		db:                   db,
+		allSentences:         sentences,
+		textInput:            ti,
+		filterInput:          filterInput,
+		state:                stateScenarioSelection,
+		scenarioStats:        stats, // The full, sorted list
+		filteredStats:        stats, // Initially, all stats are visible
+		selectedScenarios:    make(map[string]bool),
+		roundAnalytics:       make([]wordAttemptData, 0),
+		maxScenarioNameWidth: maxWidth,
+		cursor:               cursor,
+		viewportHeight:       15, // How many items to show at once
+	}
+
+	m.updateViewport() // Set initial viewport based on cursor
+	return m
 }
 
 func (m model) Init() tea.Cmd {
@@ -223,64 +275,150 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch m.state {
+	case stateScenarioSelection:
+		return m.updateScenarioSelection(msg)
+	case statePlaying, stateRoundOver:
+		return m.updatePlaying(msg)
+	default:
+		return m, nil
+	}
+}
+
+// FIXED: Corrected the duplicate case for tea.KeyRunes
+
+func (m *model) updateScenarioSelection(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
+	// Handle navigation and actions first.
+	// These should not be passed to the filter input.
+	if msg, ok := msg.(tea.KeyMsg); ok {
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyEsc:
+			return m, tea.Quit
+
+		case tea.KeyUp:
+			if m.cursor > 0 {
+				m.cursor--
+				m.updateViewport()
+			}
+			return m, nil
+
+		case tea.KeyDown:
+			if m.cursor < len(m.filteredStats)-1 {
+				m.cursor++
+				m.updateViewport()
+			}
+			return m, nil
+
+		case tea.KeyCtrlA:
+			for _, stat := range m.filteredStats { // Act on the filtered list
+				m.selectedScenarios[stat.Name] = true
+			}
+			return m, nil
+
+		case tea.KeyCtrlD:
+			m.selectedScenarios = make(map[string]bool) // Deselect all
+			return m, nil
+
+		case tea.KeyTab:
+			if len(m.filteredStats) > 0 {
+				scenarioName := m.filteredStats[m.cursor].Name
+				m.selectedScenarios[scenarioName] = !m.selectedScenarios[scenarioName]
+				if m.cursor < len(m.filteredStats)-1 {
+					m.cursor++
+					m.updateViewport()
+				}
+			}
+			return m, nil
+
+		case tea.KeyShiftTab:
+			if len(m.filteredStats) > 0 {
+				scenarioName := m.filteredStats[m.cursor].Name
+				m.selectedScenarios[scenarioName] = !m.selectedScenarios[scenarioName]
+				if m.cursor > 0 {
+					m.cursor--
+					m.updateViewport()
+				}
+			}
+			return m, nil
+
+		case tea.KeyEnter:
+			m.sessionSentences = []Sentence{}
+			for _, s := range m.allSentences {
+				if m.selectedScenarios[s.Scenario] {
+					m.sessionSentences = append(m.sessionSentences, s)
+				}
+			}
+
+			if len(m.sessionSentences) > 0 {
+				rand.Shuffle(len(m.sessionSentences), func(i, j int) {
+					m.sessionSentences[i], m.sessionSentences[j] = m.sessionSentences[j], m.sessionSentences[i]
+				})
+				m.state = statePlaying
+				m.sentenceIdx = 0
+				m.wordIdx = 0
+				m.roundAnalytics = make([]wordAttemptData, 0)
+				m.wordStartTime = time.Now()
+				m.textInput.Focus() // Switch focus to game input
+			}
+			return m, nil
+		}
+	}
+
+	// Pass all other messages to the filter input.
+	oldFilter := m.filterInput.Value()
+	m.filterInput, cmd = m.filterInput.Update(msg)
+
+	// If the filter text changed, re-apply the filter.
+	if m.filterInput.Value() != oldFilter {
+		m.applyFilter()
+	}
+
+	return m, cmd
+}
+
+func (m *model) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
-
 		case tea.KeyEnter:
-			// --- STATE: Round is over, user wants to proceed ---
 			if m.state == stateRoundOver {
 				m.state = statePlaying
 				m.wordIdx = 0
-				m.sentenceIdx = (m.sentenceIdx + 1) % len(m.sentences) // Cycle through sentences
+				m.sentenceIdx = (m.sentenceIdx + 1) % len(m.sessionSentences)
 				m.textInput.SetValue("")
-
-				// NEW: Reset analytics for the new round.
 				m.roundAnalytics = make([]wordAttemptData, 0)
 				m.wordStartTime = time.Now()
-
 				return m, nil
 			}
-
-			// --- STATE: User is playing and submitted a word ---
-			currentSentence := m.sentences[m.sentenceIdx]
+			currentSentence := m.sessionSentences[m.sentenceIdx]
 			targetWord := currentSentence.CleanWords[m.wordIdx]
 			userInput := cleanWord(m.textInput.Value())
 			isCorrect := (userInput == targetWord)
-
-			// NEW: Capture analytics for this specific word attempt.
 			duration := time.Since(m.wordStartTime)
 			attempt := wordAttemptData{
 				WordIndex: m.wordIdx,
-				UserInput: m.textInput.Value(), // Log raw input for detailed error review.
+				UserInput: m.textInput.Value(),
 				IsCorrect: isCorrect,
 				Duration:  duration,
 			}
 			m.roundAnalytics = append(m.roundAnalytics, attempt)
-
-			m.roundResult.isCorrect = isCorrect // For the view.
-
-			// Log the individual word attempt (old system, still useful for SR).
+			m.roundResult.isCorrect = isCorrect
 			logPlay(m.db, currentSentence.ID, isCorrect)
-
 			if isCorrect {
 				m.wordIdx++
 				m.textInput.SetValue("")
-				m.wordStartTime = time.Now() // Reset timer for the next word.
-
-				// Check if the whole sentence is complete
+				m.wordStartTime = time.Now()
 				if m.wordIdx >= len(currentSentence.Words) {
-					m.state = stateRoundOver // Transition to success screen
-					// NEW: Log the full, successful sentence result to the database.
+					m.state = stateRoundOver
 					logSentenceResult(m.db, currentSentence.ID, true, m.roundAnalytics)
 				}
 			} else {
-				m.state = stateRoundOver // Transition to failure screen
-				// NEW: Log the full, failed sentence result to the database.
+				m.state = stateRoundOver
 				logSentenceResult(m.db, currentSentence.ID, false, m.roundAnalytics)
 			}
 			return m, nil
@@ -289,7 +427,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg
 		return m, nil
 	}
-
 	m.textInput, cmd = m.textInput.Update(msg)
 	return m, cmd
 }
@@ -298,57 +435,110 @@ func (m model) View() string {
 	if m.err != nil {
 		return styleError.Render("Error: " + m.err.Error())
 	}
-
-	if len(m.sentences) == 0 {
-		return styleError.Render("No sentences found in '" + scenariosDir + "'. Please add TSV files.")
-	}
-
-	if m.state == stateRoundOver {
+	switch m.state {
+	case stateScenarioSelection:
+		return m.viewScenarioSelection()
+	case stateRoundOver:
 		return m.viewRoundOver()
+	case statePlaying:
+		if len(m.sessionSentences) == 0 {
+			return m.viewScenarioSelection()
+		}
+		return m.viewPlaying()
+	default:
+		return "Unknown state."
 	}
-
-	return m.viewPlaying()
 }
 
-// viewPlaying renders the main game screen.
+func (m *model) viewScenarioSelection() string {
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("finyap-go: Scenario Selection"))
+	b.WriteString("\n\n")
+	b.WriteString(m.filterInput.View())
+	b.WriteString("\n\n")
+
+	// Calculate viewport boundaries
+	start := m.viewportStart
+	end := m.viewportStart + m.viewportHeight
+	if end > len(m.filteredStats) {
+		end = len(m.filteredStats)
+	}
+
+	if len(m.filteredStats) == 0 {
+		b.WriteString("No scenarios match your filter.\n")
+	} else {
+		// Render only the visible part of the list
+		format := fmt.Sprintf("%%s %%s %%-%ds | Plays: %%-5d | %%s %%.0f%%%%", m.maxScenarioNameWidth) // <- REMOVED TRAILING \n
+		for i := start; i < end; i++ {
+			stat := m.filteredStats[i]
+			cursor := " "
+			if m.cursor == i {
+				cursor = styleCursor.Render(">")
+			}
+
+			checked := "[ ]"
+			if m.selectedScenarios[stat.Name] {
+				checked = styleCorrect.Render("[x]")
+			}
+
+			var percentage float64
+			if stat.TotalPlays > 0 {
+				percentage = float64(stat.CorrectPlays) / float64(stat.TotalPlays) * 100
+			}
+			bar := renderBar(percentage/100, 40) // renderBar expects 0.0-1.0
+
+			line := fmt.Sprintf(format, cursor, checked, stat.Name, stat.TotalPlays, bar, percentage)
+
+			// Highlight the entire line if it's the current cursor position
+			if m.cursor == i {
+				b.WriteString(styleHighlight.Render(line))
+			} else {
+				b.WriteString(line)
+			}
+			b.WriteString("\n") // <- ADDED NEWLINE HERE, OUTSIDE THE RENDER
+		}
+	}
+
+	b.WriteString(fmt.Sprintf("\n  %s", styleSubtle.Render(fmt.Sprintf("Showing %d of %d scenarios", len(m.filteredStats), len(m.scenarioStats)))))
+	b.WriteString(styleSubtle.Render("\n\n ↑/↓: Navigate | tab: Toggle | enter: Start"))
+	b.WriteString(styleSubtle.Render("\n ctrl+a: Select All (Filtered) | ctrl+d: Deselect All | esc: Quit"))
+	return b.String()
+}
+
+func renderBar(percentage float64, width int) string {
+	greenCount := int(percentage * float64(width))
+	redCount := width - greenCount
+	return strings.Repeat(styleBarGreen.String(), greenCount) +
+		strings.Repeat(styleBarRed.String(), redCount)
+}
+
 func (m model) viewPlaying() string {
 	var b strings.Builder
-	const indent = "  " // Define the consistent indent
-
+	const indent = "  "
 	b.WriteString(styleHeader.Render("finyap-go"))
 	b.WriteRune('\n')
-
-	currentSentence := m.sentences[m.sentenceIdx]
-
-	b.WriteString(styleSubtle.Render(fmt.Sprintf("Scenario: %s [%d/%d]",
-		currentSentence.Scenario, m.sentenceIdx+1, len(m.sentences))))
+	currentSentence := m.sessionSentences[m.sentenceIdx]
+	b.WriteString(fmt.Sprintf("Scenario: %s [%d/%d]",
+		styleScenarioYellow.Render(currentSentence.Scenario), m.sentenceIdx+1, len(m.sessionSentences)))
 	b.WriteRune('\n')
 	b.WriteString(currentSentence.English)
 	b.WriteRune('\n')
 	b.WriteRune('\n')
-
-	// Render the sentence with cipher and highlights
 	var displayedWords []string
 	for i, word := range currentSentence.Words {
 		if i < m.wordIdx {
-			// Already guessed correctly
 			displayedWords = append(displayedWords, styleCorrect.Render(applyCliticStyling(word)))
 		} else if i == m.wordIdx {
-			// The current word to guess
 			styledWord := applyCliticStyling(cipherWord(word))
 			displayedWords = append(displayedWords, styleHighlight.Render(styledWord))
 		} else {
-			// Future words
 			displayedWords = append(displayedWords, applyCliticStyling(cipherWord(word)))
 		}
 	}
-	b.WriteString(indent) // Apply indent
+	b.WriteString(indent)
 	b.WriteString(strings.Join(displayedWords, wordSeparator))
 	b.WriteRune('\n')
 	b.WriteRune('\n')
-
-	// --- DYNAMIC ALIGNMENT LOGIC ---
-	// Calculate the visual width of the sentence part before the current word.
 	var promptPadding string
 	if m.wordIdx > 0 {
 		prefixSlice := displayedWords[:m.wordIdx]
@@ -356,66 +546,49 @@ func (m model) viewPlaying() string {
 		prefixWidth := lipgloss.Width(prefixString) + lipgloss.Width(wordSeparator)
 		promptPadding = strings.Repeat(" ", prefixWidth)
 	}
-
-	// Render the prompt and the text input view manually.
-	b.WriteString(indent) // Apply indent
+	b.WriteString(indent)
 	b.WriteString(promptPadding)
-	b.WriteString("")
 	b.WriteString(m.textInput.View())
 	b.WriteRune('\n')
-
-	// Render the live feedback line, also padded for alignment.
 	feedbackLine := renderLiveFeedback(m.textInput.Value(), currentSentence.CleanWords[m.wordIdx])
 	if feedbackLine != "" {
-		b.WriteString(indent) // Apply indent
+		b.WriteString(indent)
 		b.WriteString(promptPadding)
 		b.WriteString(feedbackLine)
 		b.WriteRune('\n')
 	}
-
 	b.WriteRune('\n')
 	b.WriteString(styleSubtle.Render("Press Esc or Ctrl+C to quit."))
-
 	return b.String()
 }
 
-// viewRoundOver renders the summary screen after a sentence is completed or failed.
 func (m model) viewRoundOver() string {
 	var b strings.Builder
-	currentSentence := m.sentences[m.sentenceIdx]
-
+	currentSentence := m.sessionSentences[m.sentenceIdx]
 	b.WriteString(styleHeader.Render("Round Over"))
 	b.WriteRune('\n')
-
 	if m.roundResult.isCorrect {
 		b.WriteString(styleCorrect.Render("🎉 Correct! You completed the sentence."))
 	} else {
 		userInput := m.textInput.Value()
 		targetWord := currentSentence.Words[m.wordIdx]
-
-		// Generate the styled diffs
 		styledInput, styledTarget := diffStrings(userInput, targetWord)
-
 		b.WriteString(styleIncorrect.Render("❌ Not quite."))
 		b.WriteString(fmt.Sprintf("\nYour input:   %s", styledInput))
 		b.WriteString(fmt.Sprintf("\nCorrect word: %s", styledTarget))
 	}
-
 	b.WriteString("\n\nFull sentence:\n")
 	b.WriteString(fmt.Sprintf("FI: %s\n", styleCorrect.Render(currentSentence.Finnish)))
 	b.WriteString(fmt.Sprintf("EN: %s\n", currentSentence.English))
 	b.WriteString(styleSubtle.Render("\nPress Enter to continue to the next sentence..."))
-
 	return b.String()
 }
 
-// renderLiveFeedback gives the user a colored string showing their typing accuracy in real-time.
 func renderLiveFeedback(input, target string) string {
 	input = cleanWord(input)
 	if input == "" {
 		return ""
 	}
-
 	var coloredChars []string
 	for i, r := range input {
 		if i >= len(target) {
@@ -428,20 +601,16 @@ func renderLiveFeedback(input, target string) string {
 			coloredChars = append(coloredChars, styleIncorrect.Render(string(r)))
 		}
 	}
-
 	return "Feedback: " + strings.Join(coloredChars, "")
 }
 
 // --- DATABASE FUNCTIONS ---
 
-// initDB creates and opens a connection to the SQLite database.
 func initDB() (*sql.DB, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
-
-	// `sentences` stores the canonical list of sentences.
 	createSentencesTableSQL := `
 	CREATE TABLE IF NOT EXISTS sentences (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -449,8 +618,6 @@ func initDB() (*sql.DB, error) {
 		finnish TEXT NOT NULL UNIQUE,
 		english TEXT NOT NULL
 	);`
-
-	// `plays` logs every single attempt for granular spaced repetition analysis.
 	createPlaysTableSQL := `
 	CREATE TABLE IF NOT EXISTS plays (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -459,9 +626,6 @@ func initDB() (*sql.DB, error) {
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (sentence_id) REFERENCES sentences (id)
 	);`
-
-	// NEW: `sentence_results` logs a summary of an entire sentence attempt,
-	// including detailed performance data for deliberate practice analysis.
 	createSentenceResultsTableSQL := `
 	CREATE TABLE IF NOT EXISTS sentence_results (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -469,44 +633,36 @@ func initDB() (*sql.DB, error) {
 		completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		total_duration_ms INTEGER NOT NULL,
 		was_successful BOOLEAN NOT NULL,
-		attempt_details TEXT, -- This will be a JSON blob with word-by-word details.
+		attempt_details TEXT,
 		FOREIGN KEY (sentence_id) REFERENCES sentences (id)
 	);`
-
 	for _, stmt := range []string{createSentencesTableSQL, createPlaysTableSQL, createSentenceResultsTableSQL} {
 		if _, err := db.Exec(stmt); err != nil {
 			return nil, err
 		}
 	}
-
 	return db, nil
 }
 
-// syncSentencesWithDB ensures all sentences from files are in the DB and retrieves their IDs.
 func syncSentencesWithDB(db *sql.DB, sentences *[]Sentence) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-
 	stmt, err := tx.Prepare("INSERT OR IGNORE INTO sentences (scenario, finnish, english) VALUES (?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-
 	for _, s := range *sentences {
 		if _, err := stmt.Exec(s.Scenario, s.Finnish, s.English); err != nil {
 			return err
 		}
 	}
-
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-
-	// Now fetch the IDs for all sentences
 	for i := range *sentences {
 		s := &(*sentences)[i]
 		err := db.QueryRow("SELECT id FROM sentences WHERE finnish = ?", s.Finnish).Scan(&s.ID)
@@ -514,11 +670,9 @@ func syncSentencesWithDB(db *sql.DB, sentences *[]Sentence) error {
 			return fmt.Errorf("failed to get ID for sentence '%s': %w", s.Finnish, err)
 		}
 	}
-
 	return nil
 }
 
-// logPlay records a single guess attempt in the database.
 func logPlay(db *sql.DB, sentenceID int64, wasCorrect bool) {
 	_, err := db.Exec("INSERT INTO plays (sentence_id, was_correct) VALUES (?, ?)", sentenceID, wasCorrect)
 	if err != nil {
@@ -526,11 +680,9 @@ func logPlay(db *sql.DB, sentenceID int64, wasCorrect bool) {
 	}
 }
 
-// NEW: logSentenceResult records the full analytics of a completed sentence round.
 func logSentenceResult(db *sql.DB, sentenceID int64, wasSuccessful bool, attempts []wordAttemptData) {
 	var totalDuration time.Duration
 	details := make([]WordAttemptDetail, len(attempts))
-
 	for i, attempt := range attempts {
 		totalDuration += attempt.Duration
 		details[i] = WordAttemptDetail{
@@ -540,13 +692,11 @@ func logSentenceResult(db *sql.DB, sentenceID int64, wasSuccessful bool, attempt
 			DurationMs: attempt.Duration.Milliseconds(),
 		}
 	}
-
 	detailsJSON, err := json.Marshal(details)
 	if err != nil {
 		log.Printf("Error marshalling sentence result details to JSON: %v", err)
 		return
 	}
-
 	_, err = db.Exec(
 		"INSERT INTO sentence_results (sentence_id, was_successful, total_duration_ms, attempt_details) VALUES (?, ?, ?, ?)",
 		sentenceID,
@@ -559,22 +709,50 @@ func logSentenceResult(db *sql.DB, sentenceID int64, wasSuccessful bool, attempt
 	}
 }
 
+func getScenarioStats(db *sql.DB) ([]ScenarioStat, error) {
+	query := `
+		SELECT
+			s.scenario,
+			COUNT(sr.id) as total_plays,
+			SUM(CASE WHEN sr.was_successful = 1 THEN 1 ELSE 0 END) as correct_plays,
+			COUNT(DISTINCT s.id) as sentences_in_db
+		FROM sentences s
+		LEFT JOIN sentence_results sr ON s.id = sr.sentence_id
+		GROUP BY s.scenario
+		ORDER BY s.scenario ASC;
+	`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query scenario stats: %w", err)
+	}
+	defer rows.Close()
+	var stats []ScenarioStat
+	for rows.Next() {
+		var stat ScenarioStat
+		var correctPlays sql.NullInt64
+		if err := rows.Scan(&stat.Name, &stat.TotalPlays, &correctPlays, &stat.SentencesInDB); err != nil {
+			return nil, fmt.Errorf("failed to scan scenario stat row: %w", err)
+		}
+		stat.CorrectPlays = int(correctPlays.Int64)
+		stats = append(stats, stat)
+	}
+	return stats, nil
+}
+
 // --- DATA LOADING ---
 
-// loadSentencesFromTSV walks the scenarios directory and parses all .tsv files.
 func loadSentencesFromTSV() ([]Sentence, error) {
-	var sentences []Sentence
-
+	var allSentences []Sentence
 	err := filepath.WalkDir(scenariosDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if !d.IsDir() && strings.HasSuffix(path, ".tsv") {
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return err
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				log.Printf("Error reading file %s: %v", path, readErr)
+				return nil
 			}
-
 			lines := strings.Split(string(content), "\n")
 			for _, line := range lines {
 				if strings.TrimSpace(line) == "" {
@@ -582,21 +760,18 @@ func loadSentencesFromTSV() ([]Sentence, error) {
 				}
 				parts := strings.SplitN(line, "\t", 2)
 				if len(parts) != 2 {
-					continue // Skip malformed lines
+					continue
 				}
-
 				finnishSentence := strings.TrimSpace(parts[0])
 				words := strings.Fields(finnishSentence)
 				if len(words) == 0 {
-					continue // Skip empty sentences
+					continue
 				}
-
 				cleanWords := make([]string, len(words))
 				for i, w := range words {
 					cleanWords[i] = cleanWord(w)
 				}
-
-				sentences = append(sentences, Sentence{
+				allSentences = append(allSentences, Sentence{
 					Scenario:   filepath.Base(path),
 					Finnish:    finnishSentence,
 					English:    strings.TrimSpace(parts[1]),
@@ -607,46 +782,62 @@ func loadSentencesFromTSV() ([]Sentence, error) {
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Shuffle the sentences for variety
-	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(sentences), func(i, j int) {
-		sentences[i], sentences[j] = sentences[j], sentences[i]
-	})
-
-	return sentences, nil
+	return allSentences, err
 }
 
 // --- MAIN FUNCTION ---
 
 func main() {
-	// 1. Load all sentences from files into memory
+	rand.Seed(time.Now().UnixNano())
 	sentences, err := loadSentencesFromTSV()
 	if err != nil {
 		log.Fatalf("Failed to load scenario files: %v", err)
 	}
-
-	if len(sentences) == 0 {
-		fmt.Printf("No sentences found in '%s' directory. Exiting.\n", scenariosDir)
-		os.Exit(0)
-	}
-
-	// 2. Initialize database and sync sentences
 	db, err := initDB()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
-
 	if err := syncSentencesWithDB(db, &sentences); err != nil {
 		log.Fatalf("Failed to sync sentences with database: %v", err)
 	}
 
-	// 3. Start the Bubbletea TUI program
-	p := tea.NewProgram(newModel(db, sentences))
+	stats, err := getScenarioStats(db)
+	if err != nil {
+		log.Fatalf("Failed to get scenario stats: %v", err)
+	}
+
+	// --- START: New sorting logic ---
+	// Group stats by their play count
+	groupedStats := make(map[int][]ScenarioStat)
+	for _, s := range stats {
+		groupedStats[s.TotalPlays] = append(groupedStats[s.TotalPlays], s)
+	}
+
+	// Get unique play counts and sort them in descending order
+	var playCounts []int
+	for pc := range groupedStats {
+		playCounts = append(playCounts, pc)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(playCounts)))
+
+	// Reassemble the list, shuffling within each play-count group
+	var sortedAndShuffledStats []ScenarioStat
+	for _, pc := range playCounts {
+		group := groupedStats[pc]
+		rand.Shuffle(len(group), func(i, j int) {
+			group[i], group[j] = group[j], group[i]
+		})
+		sortedAndShuffledStats = append(sortedAndShuffledStats, group...)
+	}
+	// --- END: New sorting logic ---
+
+	if len(sentences) == 0 && len(stats) == 0 {
+		fmt.Printf("No sentences found in '%s' directory. Exiting.\n", scenariosDir)
+		os.Exit(0)
+	}
+	// Pass the sorted and shuffled stats to the model
+	p := tea.NewProgram(newModel(db, sentences, sortedAndShuffledStats))
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Error running program: %v", err)
 	}
